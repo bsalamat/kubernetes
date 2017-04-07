@@ -42,6 +42,8 @@ import (
 	"k8s.io/kubernetes/plugin/cmd/kube-scheduler/app"
 	"k8s.io/kubernetes/plugin/cmd/kube-scheduler/app/options"
 	"k8s.io/kubernetes/plugin/pkg/scheduler"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities"
 	_ "k8s.io/kubernetes/plugin/pkg/scheduler/algorithmprovider"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
 	e2e "k8s.io/kubernetes/test/e2e/framework"
@@ -65,9 +67,8 @@ func TestSchedulerCreationFromConfigMap(t *testing.T) {
 	defer framework.DeleteTestingNamespace(ns, s, t)
 
 	clientSet := clientset.NewForConfigOrDie(&restclient.Config{Host: s.URL, ContentConfig: restclient.ContentConfig{GroupVersion: &api.Registry.GroupOrDie(v1.GroupName).GroupVersion}})
-	informerFactory := informers.NewSharedInformerFactory(clientSet, 0)
-
 	defer clientSet.Core().Nodes().DeleteCollection(nil, metav1.ListOptions{})
+	informerFactory := informers.NewSharedInformerFactory(clientSet, 0)
 
 	// Add a ConfigMap object.
 	configPolicyName := "scheduler-custom-policy-config"
@@ -87,13 +88,14 @@ func TestSchedulerCreationFromConfigMap(t *testing.T) {
 			],
 			"priorities" : [
 				{"name" : "LeastRequestedPriority", "weight" : 1},
-				{"name" : "BalancedResourceAllocation", "weight" : 1},
-				{"name" : "ServiceSpreadingPriority", "weight" : 1},
-				{"name" : "EqualPriority", "weight" : 1}
+				{"name" : "BalancedResourceAllocation", "weight" : 2},
+				{"name" : "ServiceSpreadingPriority", "weight" : 3},
+				{"name" : "EqualPriority", "weight" : 4}
 			]
 			}`,
 		},
 	}
+
 	policyConfigMap.APIVersion = api.Registry.GroupOrDie(v1.GroupName).GroupVersion.String()
 	clientSet.Core().ConfigMaps(metav1.NamespaceSystem).Create(&policyConfigMap)
 
@@ -117,10 +119,20 @@ func TestSchedulerCreationFromConfigMap(t *testing.T) {
 		t.Fatalf("Error creating scheduler: %v", err)
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
+	// Verify that the config is applied correctly.
+	schedPredicates := sched.Config().Algorithm.Predicates()
+	schedPrioritizers := sched.Config().Algorithm.Prioritizers()
 
-	informerFactory.Start(stop)
+	if schedPredicates["PodFitsHostPorts"] == nil {
+		t.Errorf("Expected to have a PodFitsHostPorts predicate.")
+	}
+	if schedPrioritizers[1].Reduce != priorities.BalancedResourceAllocationMap ||
+		schedPrioritizers[1].Weight != 2 {
+		t.Errorf("Expected to have BalancedResourceAllocation priority")
+	}
+	defer close(sched.Config().StopEverything)
+
+	informerFactory.Start(sched.Config().StopEverything)
 	sched.Run()
 
 	DoTestUnschedulableNodes(t, clientSet, ns, informerFactory.Core().V1().Nodes().Lister())
@@ -173,7 +185,6 @@ func TestSchedulerCreationInLegacyMode(t *testing.T) {
 
 	clientSet := clientset.NewForConfigOrDie(&restclient.Config{Host: s.URL, ContentConfig: restclient.ContentConfig{GroupVersion: &api.Registry.GroupOrDie(v1.GroupName).GroupVersion}})
 	defer clientSet.Core().Nodes().DeleteCollection(nil, metav1.ListOptions{})
-
 	informerFactory := informers.NewSharedInformerFactory(clientSet, 0)
 
 	eventBroadcaster := record.NewBroadcaster()
@@ -199,10 +210,8 @@ func TestSchedulerCreationInLegacyMode(t *testing.T) {
 		t.Fatalf("Creation of scheduler in legacy mode failed: %v", err)
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	informerFactory.Start(stop)
+	informerFactory.Start(sched.Config().StopEverything)
+	defer close(sched.Config().StopEverything)
 
 	sched.Run()
 	DoTestUnschedulableNodes(t, clientSet, ns, informerFactory.Core().V1().Nodes().Lister())
