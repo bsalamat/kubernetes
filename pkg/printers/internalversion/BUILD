@@ -76,6 +76,7 @@ go_library(
         "//pkg/apis/networking:go_default_library",
         "//pkg/apis/policy:go_default_library",
         "//pkg/apis/rbac:go_default_library",
+        "//pkg/apis/scheduling:go_default_library",
         "//pkg/apis/settings:go_default_library",
         "//pkg/apis/storage:go_default_library",
         "//pkg/apis/storage/util:go_default_library",
