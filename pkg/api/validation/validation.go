@@ -2909,6 +2909,22 @@ func ValidateService(service *api.Service) field.ErrorList {
 		nodePorts[key] = true
 	}
 
+	// Check for duplicate TargetPort
+	portsPath = specPath.Child("ports")
+	targetPorts := make(map[api.ServicePort]bool)
+	for i, port := range service.Spec.Ports {
+		if (port.TargetPort.Type == intstr.Int && port.TargetPort.IntVal == 0) || (port.TargetPort.Type == intstr.String && port.TargetPort.StrVal == "") {
+			continue
+		}
+		portPath := portsPath.Index(i)
+		key := api.ServicePort{Protocol: port.Protocol, TargetPort: port.TargetPort}
+		_, found := targetPorts[key]
+		if found {
+			allErrs = append(allErrs, field.Duplicate(portPath.Child("targetPort"), port.TargetPort))
+		}
+		targetPorts[key] = true
+	}
+
 	// Validate SourceRange field and annotation
 	_, ok := service.Annotations[api.AnnotationLoadBalancerSourceRangesKey]
 	if len(service.Spec.LoadBalancerSourceRanges) > 0 || ok {
@@ -4012,12 +4028,10 @@ func validateEndpointSubsets(subsets []api.EndpointSubset, oldSubsets []api.Endp
 		ss := &subsets[i]
 		idxPath := fldPath.Index(i)
 
+		// EndpointSubsets must include endpoint address. For headless service, we allow its endpoints not to have ports.
 		if len(ss.Addresses) == 0 && len(ss.NotReadyAddresses) == 0 {
 			//TODO: consider adding a RequiredOneOf() error for this and similar cases
 			allErrs = append(allErrs, field.Required(idxPath, "must specify `addresses` or `notReadyAddresses`"))
-		}
-		if len(ss.Ports) == 0 {
-			allErrs = append(allErrs, field.Required(idxPath.Child("ports"), ""))
 		}
 		for addr := range ss.Addresses {
 			allErrs = append(allErrs, validateEndpointAddress(&ss.Addresses[addr], idxPath.Child("addresses").Index(addr), ipToNodeName)...)

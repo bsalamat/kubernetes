@@ -90,6 +90,8 @@ pkg/apis/networking/validation
 pkg/apis/policy/install
 pkg/apis/rbac/install
 pkg/apis/rbac/v1alpha1
+pkg/apis/scheduling/install
+pkg/apis/scheduling/validation
 pkg/apis/settings/install
 pkg/apis/settings/validation
 pkg/apis/storage/install
@@ -121,6 +123,8 @@ pkg/client/informers/informers_generated/externalversions/policy/v1beta1
 pkg/client/informers/informers_generated/externalversions/rbac
 pkg/client/informers/informers_generated/externalversions/rbac/v1alpha1
 pkg/client/informers/informers_generated/externalversions/rbac/v1beta1
+pkg/client/informers/informers_generated/externalversions/scheduling
+pkg/client/informers/informers_generated/externalversions/scheduling/v1alpha1
 pkg/client/informers/informers_generated/externalversions/settings
 pkg/client/informers/informers_generated/externalversions/settings/v1alpha1
 pkg/client/informers/informers_generated/externalversions/storage
@@ -147,6 +151,8 @@ pkg/client/informers/informers_generated/internalversion/policy
 pkg/client/informers/informers_generated/internalversion/policy/internalversion
 pkg/client/informers/informers_generated/internalversion/rbac
 pkg/client/informers/informers_generated/internalversion/rbac/internalversion
+pkg/client/informers/informers_generated/internalversion/scheduling
+pkg/client/informers/informers_generated/internalversion/scheduling/internalversion
 pkg/client/informers/informers_generated/internalversion/settings
 pkg/client/informers/informers_generated/internalversion/settings/internalversion
 pkg/client/informers/informers_generated/internalversion/storage
@@ -182,6 +188,8 @@ pkg/client/listers/policy/v1beta1
 pkg/client/listers/rbac/internalversion
 pkg/client/listers/rbac/v1alpha1
 pkg/client/listers/rbac/v1beta1
+pkg/client/listers/scheduling/internalversion
+pkg/client/listers/scheduling/v1alpha1
 pkg/client/listers/settings/internalversion
 pkg/client/listers/settings/v1alpha1
 pkg/client/listers/storage/internalversion
@@ -472,14 +480,14 @@ test/images/entrypoint-tester
 test/images/fakegitserver
 test/images/goproxy
 test/images/logs-generator
-test/images/mount-tester
+test/images/mounttest
 test/images/n-way-http
 test/images/net
 test/images/net/common
 test/images/port-forward-tester
 test/images/porter
 test/images/resource-consumer/consume-cpu
-test/images/serve_hostname
+test/images/serve-hostname
 test/integration/apiserver
 test/integration/client
 test/integration/configmap

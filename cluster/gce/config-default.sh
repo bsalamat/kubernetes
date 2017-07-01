@@ -67,7 +67,7 @@ fi
 # containervm. If you are updating the containervm version, update this
 # variable. Also please update corresponding image for node e2e at:
 # https://github.com/kubernetes/kubernetes/blob/master/test/e2e_node/jenkins/image-config.yaml
-CVM_VERSION=${CVM_VERSION:-container-vm-v20170214}
+CVM_VERSION=${CVM_VERSION:-container-vm-v20170627}
 GCI_VERSION=${KUBE_GCI_VERSION:-cos-stable-59-9460-64-0}
 MASTER_IMAGE=${KUBE_GCE_MASTER_IMAGE:-}
 MASTER_IMAGE_PROJECT=${KUBE_GCE_MASTER_PROJECT:-cos-cloud}
@@ -117,6 +117,10 @@ ENABLE_L7_LOADBALANCING="${KUBE_ENABLE_L7_LOADBALANCING:-glbc}"
 #   googleinfluxdb - Enable influxdb and google (except GCM)
 #   standalone     - Heapster only. Metrics available via Heapster REST API.
 ENABLE_CLUSTER_MONITORING="${KUBE_ENABLE_CLUSTER_MONITORING:-influxdb}"
+
+# One special node out of NUM_NODES would be created of this type if specified.
+# Useful for scheduling heapster in large clusters with nodes of small size.
+HEAPSTER_MACHINE_TYPE="${HEAPSTER_MACHINE_TYPE:-}"
 
 # Historically fluentd was a manifest pod and then was migrated to DaemonSet.
 # To avoid situation during cluster upgrade when there are two instances
@@ -218,7 +222,7 @@ if [ ${ENABLE_IP_ALIASES} = true ]; then
   SERVICE_CLUSTER_IP_SUBNETWORK=${KUBE_GCE_SERVICE_CLUSTER_IP_SUBNETWORK:-${INSTANCE_PREFIX}-subnet-services}
   # NODE_IP_RANGE is used when ENABLE_IP_ALIASES=true. It is the primary range in
   # the subnet and is the range used for node instance IPs.
-  NODE_IP_RANGE="${NODE_IP_RANGE:-10.40.0.0/22}"
+  NODE_IP_RANGE="$(get-node-ip-range)"
   # Add to the provider custom variables.
   PROVIDER_VARS="${PROVIDER_VARS} ENABLE_IP_ALIASES"
 fi
@@ -245,7 +249,7 @@ NETWORK_POLICY_PROVIDER="${NETWORK_POLICY_PROVIDER:-none}" # calico
 # How should the kubelet configure hairpin mode?
 HAIRPIN_MODE="${HAIRPIN_MODE:-promiscuous-bridge}" # promiscuous-bridge, hairpin-veth, none
 # Optional: if set to true, kube-up will configure the cluster to run e2e tests.
-E2E_STORAGE_TEST_ENVIRONMENT=${KUBE_E2E_STORAGE_TEST_ENVIRONMENT:-false}
+E2E_STORAGE_TEST_ENVIRONMENT="${KUBE_E2E_STORAGE_TEST_ENVIRONMENT:-false}"
 
 # Evict pods whenever compute resource availability on the nodes gets below a threshold.
 EVICTION_HARD="${EVICTION_HARD:-memory.available<250Mi,nodefs.available<10%,nodefs.inodesFree<5%}"
@@ -266,4 +270,6 @@ SOFTLOCKUP_PANIC="${SOFTLOCKUP_PANIC:-false}" # true, false
 # Indicates if the values (i.e. KUBE_USER and KUBE_PASSWORD for basic
 # authentication) in metadata should be treated as canonical, and therefore disk
 # copies ought to be recreated/clobbered.
-METADATA_CLOBBERS_CONFIG=${METADATA_CLOBBERS_CONFIG:-false}
+METADATA_CLOBBERS_CONFIG="${METADATA_CLOBBERS_CONFIG:-false}"
+
+ENABLE_BIG_CLUSTER_SUBNETS="${ENABLE_BIG_CLUSTER_SUBNETS:-false}"

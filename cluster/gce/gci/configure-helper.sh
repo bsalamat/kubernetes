@@ -880,7 +880,7 @@ function start-kubelet {
     flags+=" --port=${KUBELET_PORT}"
   fi
   if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
-    flags+="${MASTER_KUBELET_TEST_ARGS:-}"
+    flags+=" ${MASTER_KUBELET_TEST_ARGS:-}"
     flags+=" --enable-debugging-handlers=false"
     flags+=" --hairpin-mode=none"
     if [[ "${REGISTER_MASTER_KUBELET:-false}" == "true" ]]; then
@@ -895,7 +895,7 @@ function start-kubelet {
       flags+=" --pod-cidr=${MASTER_IP_RANGE}"
     fi
   else # For nodes
-    flags+="${NODE_KUBELET_TEST_ARGS:-}"
+    flags+=" ${NODE_KUBELET_TEST_ARGS:-}"
     flags+=" --enable-debugging-handlers=true"
     flags+=" --bootstrap-kubeconfig=/var/lib/kubelet/bootstrap-kubeconfig"
     flags+=" --require-kubeconfig"
@@ -912,7 +912,11 @@ function start-kubelet {
     flags+=" --cni-bin-dir=/home/kubernetes/bin"
     if [[ "${NETWORK_POLICY_PROVIDER:-}" == "calico" ]]; then
       # Calico uses CNI always.
-      flags+=" --network-plugin=cni"
+      if [[ "${KUBERNETES_PRIVATE_MASTER:-}" == "true" ]]; then
+        flags+=" --network-plugin=${NETWORK_PROVIDER}"
+      else
+        flags+=" --network-plugin=cni"
+      fi
     else
       # Otherwise use the configured value.
       flags+=" --network-plugin=${NETWORK_PROVIDER}"
