@@ -2808,6 +2808,15 @@ message PodSpec {
   // The higher the value, the higher the priority.
   // +optional
   optional int32 priority = 25;
+
+  // NominatedNodeName in indicates the node that is chosen to run this pod, but
+  // the node may still have other running pods and is waiting for their graceful
+  // termination before it can run this pod. This nominated node is not
+  // guaranteed to be the same as the node that scheduler will eventually
+  // choose to run the pod.
+  // This field must not be set by clients.
+  // +optional
+  optional string nominatedNodeName = 26;
 }
 
 // PodStatus represents information about the status of a pod. Status may trail the actual

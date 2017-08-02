@@ -3243,6 +3243,13 @@ When an object is created, the system will populate this list with the current s
 <td class="tableblock halign-left valign-top"><p class="tableblock">integer (int32)</p></td>
 <td class="tableblock halign-left valign-top"></td>
 </tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">nominatedNodeName</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">NominatedNodeName in indicates the node that is chosen to run this pod, but the node may still have other running pods and is waiting for their graceful termination before it can run this pod. This nominated node is not guaranteed to be the same as the node that scheduler will eventually choose to run the pod. This field must not be set by clients.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
 </tbody>
 </table>
 
