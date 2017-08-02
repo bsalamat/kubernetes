@@ -378,6 +378,27 @@ func TestPodAdmission(t *testing.T) {
 			0,
 			true,
 		},
+		{
+			"pod with nominatedNodeName",
+			[]*scheduling.PriorityClass{},
+			api.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-w-nominated-node",
+					Namespace: "namespace",
+				},
+				Spec: api.PodSpec{
+					Containers: []api.Container{
+						{
+							Name: containerName,
+						},
+					},
+					NominatedNodeName: "test",
+					PriorityClassName: "system-cluster-critical",
+				},
+			},
+			0,
+			true,
+		},
 	}
 
 	for _, test := range tests {

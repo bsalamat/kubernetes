@@ -3782,6 +3782,13 @@ func TestValidatePodSpec(t *testing.T) {
 			DNSPolicy:         api.DNSClusterFirst,
 			PriorityClassName: "valid-name",
 		},
+		{ // Populate NominatedNodeName
+			Volumes:           []api.Volume{{Name: "vol", VolumeSource: api.VolumeSource{EmptyDir: &api.EmptyDirVolumeSource{}}}},
+			Containers:        []api.Container{{Name: "ctr", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: "File"}},
+			RestartPolicy:     api.RestartPolicyAlways,
+			DNSPolicy:         api.DNSClusterFirst,
+			NominatedNodeName: "foobar",
+		},
 	}
 	for i := range successCases {
 		if errs := ValidatePodSpec(&successCases[i], field.NewPath("field")); len(errs) != 0 {
@@ -3958,6 +3965,13 @@ func TestValidatePodSpec(t *testing.T) {
 			RestartPolicy:     api.RestartPolicyAlways,
 			DNSPolicy:         api.DNSClusterFirst,
 			PriorityClassName: "InvalidName",
+		},
+		"bad nominatedNodeName": {
+			NominatedNodeName: "node name",
+			Volumes:           []api.Volume{{Name: "vol", VolumeSource: api.VolumeSource{EmptyDir: &api.EmptyDirVolumeSource{}}}},
+			Containers:        []api.Container{{Name: "ctr", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: "File"}},
+			RestartPolicy:     api.RestartPolicyAlways,
+			DNSPolicy:         api.DNSClusterFirst,
 		},
 	}
 	for k, v := range failureCases {

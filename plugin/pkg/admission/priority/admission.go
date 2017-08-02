@@ -145,6 +145,9 @@ func (p *priorityPlugin) admitPod(a admission.Attributes) error {
 	if operation == admission.Create && pod.Spec.Priority != nil {
 		return admission.NewForbidden(a, fmt.Errorf("The integer value of priority must not be provided in pod spec. Priority admission controller populates the value from the given PriorityClass name"))
 	}
+	if len(pod.Spec.NominatedNodeName) != 0 {
+		return admission.NewForbidden(a, fmt.Errorf("nominatedNodeName must be empty in pod spec. It is intended for internal system use"))
+	}
 	if utilfeature.DefaultFeatureGate.Enabled(features.PodPriority) {
 		var priority int32
 		if len(pod.Spec.PriorityClassName) == 0 {

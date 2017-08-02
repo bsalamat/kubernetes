@@ -2318,6 +2318,12 @@ func ValidatePodSpec(spec *api.PodSpec, fldPath *field.Path) field.ErrorList {
 		allErrs = append(allErrs, field.Forbidden(fldPath.Child("priority"), "Pod priority is disabled by feature-gate"))
 	}
 
+	if len(spec.NominatedNodeName) > 0 {
+		for _, msg := range ValidateNodeName(spec.NominatedNodeName, false) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("nominatedNodeName"), spec.NominatedNodeName, msg))
+		}
+	}
+
 	return allErrs
 }
 

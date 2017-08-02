@@ -2235,6 +2235,14 @@ type PodSpec struct {
 	// The higher the value, the higher the priority.
 	// +optional
 	Priority *int32
+	// NominatedNodeName in indicates the node that is chosen to run this pod, but
+	// the node may still have other running pods and is waiting for their graceful
+	// termination before it can run this pod. This nominated node is not
+	// guaranteed to be the same as the node that scheduler will eventually
+	// choose to run the pod.
+	// This field must not be set by clients.
+	// +optional
+	NominatedNodeName string
 }
 
 // HostAlias holds the mapping between IP and hostnames that will be injected as an entry in the
