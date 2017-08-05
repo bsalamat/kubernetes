@@ -13,6 +13,7 @@ go_test(
         "utils_test.go",
     ],
     library = ":go_default_library",
+    tags = ["automanaged"],
     deps = [
         "//pkg/apis/scheduling:go_default_library",
         "//vendor/k8s.io/api/core/v1:go_default_library",
