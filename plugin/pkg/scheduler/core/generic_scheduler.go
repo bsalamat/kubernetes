@@ -34,6 +34,7 @@ import (
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/util"
+	"math"
 )
 
 type FailedPredicateMap map[string][]algorithm.PredicateFailureReason
@@ -175,8 +176,9 @@ func (g *genericScheduler) preempt(pod *v1.Pod, nodeLister algorithm.NodeLister)
 	if len(nodeToPods) == 0 {
 		return "", nil
 	}
-	// TODO: Add a node scoring mechanism and perform preemption
-	return "", nil
+	node := pickOneNodeForPreemption(nodeToPods)
+	// TODO: Add actual preemption of pods
+	return node, nil
 }
 
 // Filters the nodes to find the ones that fit based on the given predicate functions
@@ -443,6 +445,67 @@ func EqualPriorityMap(_ *v1.Pod, _ interface{}, nodeInfo *schedulercache.NodeInf
 		Host:  node.Name,
 		Score: 1,
 	}, nil
+}
+
+// pickOneNodeForPreemption chooses one node among the given nodes. It assumes
+// pods in each map entry are ordered by decreasing priority.
+// It picks a node based on the following criteria:
+// 1. A node with minimum highest priority victim is picked.
+// 2. Ties are broken by sum of priorities of all victims.
+// 3. If there are still ties, node with the minimum number of victims is picked.
+// 4. If there are still ties, the first such node in the map is picked (sort of randomly).
+func pickOneNodeForPreemption(nodesToPods map[string][]*v1.Pod) string {
+	type nodeScore struct {
+		highestPriority int32
+		sumPriorities   int64
+		numPods         int
+	}
+	nodesToScore := map[string]nodeScore{}
+	minHighestPriority := int32(math.MaxInt32)
+	minSumPriorities := int64(math.MaxInt64)
+	minNumPods := math.MaxInt32
+	for nodeName, pods := range nodesToPods {
+		// highestPodPriority is the highest priority among the victims on this node.
+		highestPodPriority := util.GetPodPriority(pods[0])
+		if highestPodPriority < minHighestPriority {
+			minHighestPriority = highestPodPriority
+		}
+		var sumPriorities int64
+		for _, pod := range pods {
+			// We add MaxInt32+1 to all priorities to make all of them >= 0. This is
+			// needed so that a node with a few pods with negative priority is not
+			// picked over a node with a smaller number of pods with the same negative
+			// priority (and similar scenarios).
+			sumPriorities += int64(util.GetPodPriority(pod)) + int64(math.MaxInt32+1)
+		}
+		if sumPriorities < minSumPriorities {
+			minSumPriorities = sumPriorities
+		}
+		numPods := len(pods)
+		if numPods < minNumPods {
+			minNumPods = numPods
+		}
+		nodesToScore[nodeName] = nodeScore{highestPodPriority, sumPriorities, numPods}
+	}
+	theNode := "" // Picked node
+	maxScore := math.MinInt32
+	for nodeName, nodeScore := range nodesToScore {
+		score := 0
+		if nodeScore.highestPriority == minHighestPriority {
+			score += 1024
+		}
+		if nodeScore.sumPriorities == minSumPriorities {
+			score += 512
+		}
+		if nodeScore.numPods == minNumPods {
+			score += 256
+		}
+		if score > maxScore {
+			maxScore = score
+			theNode = nodeName
+		}
+	}
+	return theNode
 }
 
 // selectNodesForPreemption finds all the nodes with possible victims for
