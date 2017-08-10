@@ -175,6 +175,7 @@ func (meta *predicateMetadata) ShallowCopy() algorithm.PredicateMetadata {
 	for k, v := range meta.podPorts {
 		newPredMeta.podPorts[k] = v
 	}
+	newPredMeta.matchingAntiAffinityTerms = map[string][]matchingPodAntiAffinityTerm{}
 	for k, v := range meta.matchingAntiAffinityTerms {
 		newPredMeta.matchingAntiAffinityTerms[k] = append([]matchingPodAntiAffinityTerm(nil), v...)
 	}

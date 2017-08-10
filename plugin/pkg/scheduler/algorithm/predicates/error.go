@@ -25,6 +25,10 @@ import (
 var (
 	// The predicateName tries to be consistent as the predicate name used in DefaultAlgorithmProvider defined in
 	// defaults.go (which tend to be stable for backward compatibility)
+
+	// NOTE: when this list is updated, or the current errors are used for other
+	// purposes, "nodesWherePreemptionMightHelp" function in scheduler/core/generic_scheduler.go
+	// should be updated.
 	ErrDiskConflict              = newPredicateFailureError("NoDiskConflict")
 	ErrVolumeZoneConflict        = newPredicateFailureError("NoVolumeZoneConflict")
 	ErrNodeSelectorNotMatch      = newPredicateFailureError("MatchNodeSelector")
