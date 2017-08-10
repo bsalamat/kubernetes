@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	clientv1core "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -36,12 +37,14 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/plugin/cmd/kube-scheduler/app"
 	"k8s.io/kubernetes/plugin/cmd/kube-scheduler/app/options"
 	"k8s.io/kubernetes/plugin/pkg/scheduler"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	_ "k8s.io/kubernetes/plugin/pkg/scheduler/algorithmprovider"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/core"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 	"k8s.io/kubernetes/test/integration/framework"
@@ -645,5 +648,65 @@ func TestAllocatable(t *testing.T) {
 		t.Errorf("Test allocatable awareness: %s Pod got scheduled unexpectedly, %v", testAllocPod2.Name, err)
 	} else {
 		t.Logf("Test allocatable awareness: %s Pod not scheduled as expected", testAllocPod2.Name)
+	}
+}
+
+func TestPreemption(t *testing.T) {
+	// Enable PodPriority feature gate.
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	// Initialize scheduler.
+	context := initTest(t, "preemption")
+	defer cleanupTest(t, context)
+	// Create a node with some resources.
+	nodeRes := &v1.ResourceList{
+		v1.ResourcePods:   *resource.NewQuantity(32, resource.DecimalSI),
+		v1.ResourceCPU:    *resource.NewMilliQuantity(100, resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI),
+	}
+	_, err := createNode(context.clientSet, "node1", nodeRes)
+	// Run a low priority pod that uses all the node resources.
+	lowPriority, highPriority := int32(100), int32(1000)
+	victim, err := runPausePod(context.clientSet, initPausePod(context.clientSet, &pausePodConfig{
+		Name:      "victim-pod",
+		Namespace: context.ns.Name,
+		Priority:  &lowPriority,
+		Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
+			v1.ResourceCPU:    *resource.NewMilliQuantity(100, resource.DecimalSI),
+			v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI)},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("Error running pause pod: %v", err)
+	}
+	// Now run a higher priority pod and make sure that the pod is scheduled.
+	_, err = createPausePod(context.clientSet, &pausePodConfig{
+		Name:      "preemptor-pod",
+		Namespace: context.ns.Name,
+		Priority:  &highPriority,
+		Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
+			v1.ResourceCPU:    *resource.NewMilliQuantity(100, resource.DecimalSI),
+			v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI)},
+		},
+	})
+	if err != nil {
+		t.Errorf("Error while creating high priority pod: %v", err)
+	}
+	// Check that the lower priority pod is preempted.
+	if err = wait.Poll(time.Second, 5*time.Second, podIsGettingEvicted(context.clientSet, victim.Namespace, victim.Name)); err != nil {
+		t.Errorf("Victim pod is not getting evicted.")
+	}
+	// Also check that the preemptor pod gets the annotation for nominated node name.
+	if err = wait.Poll(time.Second, 5*time.Second, func() (bool, error) {
+		pod, err := context.clientSet.CoreV1().Pods(context.ns.Name).Get("preemptor-pod", metav1.GetOptions{})
+		if err != nil {
+			t.Errorf("error: %v", err)
+		}
+		annot, found := pod.Annotations[core.NominatedNodeAnnotationKey]
+		if found && len(annot) > 0 {
+			return true, nil
+		}
+		return false, err
+	}); err != nil {
+		t.Errorf("Pod annotation did not get set.")
 	}
 }

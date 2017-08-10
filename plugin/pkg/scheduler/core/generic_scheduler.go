@@ -18,6 +18,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -34,7 +35,6 @@ import (
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/util"
-	"math"
 )
 
 type FailedPredicateMap map[string][]algorithm.PredicateFailureReason
@@ -46,7 +46,10 @@ type FitError struct {
 
 var ErrNoNodesAvailable = fmt.Errorf("no nodes available to schedule pods")
 
-const NoNodeAvailableMsg = "No nodes are available that match all of the following predicates"
+const (
+	NoNodeAvailableMsg         = "No nodes are available that match all of the following predicates"
+	NominatedNodeAnnotationKey = "NominatedNodeName"
+)
 
 // Error returns detailed information of why the pod failed to fit on each node
 func (f *FitError) Error() string {
@@ -162,23 +165,41 @@ func (g *genericScheduler) selectHost(priorityList schedulerapi.HostPriorityList
 
 // preempt finds nodes with pods that can be preempted to make room for "pod" to
 // schedule. It chooses one of the nodes and preempts the pods on the node and
-// returns the node name if such a node is found.
-// TODO(bsalamat): This function is under construction! DO NOT USE!
-func (g *genericScheduler) preempt(pod *v1.Pod, nodeLister algorithm.NodeLister) (string, error) {
-	nodes, err := nodeLister.List()
+// returns the node name and the list of preempted pods if such a node is found.
+func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister, scheduleErr error) (string, []*v1.Pod, error) {
+	// Scheduler may return various types of errors. Consider preemption only if
+	// the error is of type FitError.
+	fitError, ok := scheduleErr.(*FitError)
+	if !ok {
+		glog.V(10).Infof("scheduleErr is not of type FitError")
+		return "", nil, nil
+	}
+	if !isPodEligibleForPreemption(pod, g.cachedNodeInfoMap) {
+		glog.V(5).Infof("Pod %v is not eligible for more preemption.", pod.Name)
+		return "", nil, nil
+	}
+	potentialNodeNames := nodesWherePreemptionMightHelp(pod, fitError.FailedPredicates)
+	if len(potentialNodeNames) == 0 {
+		return "", nil, nil
+	}
+	allNodes, err := nodeLister.List()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if len(nodes) == 0 {
-		return "", ErrNoNodesAvailable
+	if len(allNodes) == 0 {
+		return "", nil, ErrNoNodesAvailable
 	}
-	nodeToPods := selectNodesForPreemption(pod, g.cachedNodeInfoMap, nodes, g.predicates, g.predicateMetaProducer)
+	nodeToPods := selectNodesForPreemption(pod, g.cachedNodeInfoMap, allNodes, potentialNodeNames, g.predicates, g.predicateMetaProducer)
 	if len(nodeToPods) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
-	node := pickOneNodeForPreemption(nodeToPods)
-	// TODO: Add actual preemption of pods
-	return node, nil
+	if len(nodeToPods) > 0 {
+		node := pickOneNodeForPreemption(nodeToPods)
+		if len(node) > 0 {
+			return node, nodeToPods[node], err
+		}
+	}
+	return "", nil, err
 }
 
 // Filters the nodes to find the ones that fit based on the given predicate functions
@@ -528,6 +549,7 @@ func pickOneNodeForPreemption(nodesToPods map[string][]*v1.Pod) string {
 func selectNodesForPreemption(pod *v1.Pod,
 	nodeNameToInfo map[string]*schedulercache.NodeInfo,
 	nodes []*v1.Node,
+	potentialNodeNames map[string]bool,
 	predicates map[string]algorithm.FitPredicate,
 	metadataProducer algorithm.PredicateMetadataProducer,
 ) map[string][]*v1.Pod {
@@ -539,6 +561,12 @@ func selectNodesForPreemption(pod *v1.Pod,
 	meta := metadataProducer(pod, nodeNameToInfo)
 	checkNode := func(i int) {
 		nodeName := nodes[i].Name
+		// if potentialNodeNames is not nil, try the node only if it exists in potentialNodeNames.
+		if potentialNodeNames != nil {
+			if _, ok := potentialNodeNames[nodeName]; !ok {
+				return
+			}
+		}
 		pods, fits := selectVictimsOnNode(pod, meta.ShallowCopy(), nodeNameToInfo[nodeName], predicates)
 		if fits && len(pods) != 0 {
 			resultLock.Lock()
@@ -562,6 +590,7 @@ func selectNodesForPreemption(pod *v1.Pod,
 // NOTE: This function assumes that it is never called if "pod" cannot be scheduled
 // due to pod affinity, node affinity, or node anti-affinity reasons. None of
 // these predicates can be satisfied by removing more pods from the node.
+// TODO(bsalamat): Add support for PodDisruptionBudget.
 func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *schedulercache.NodeInfo, fitPredicates map[string]algorithm.FitPredicate) ([]*v1.Pod, bool) {
 	higherPriority := func(pod1, pod2 interface{}) bool {
 		return util.GetPodPriority(pod1.(*v1.Pod)) > util.GetPodPriority(pod2.(*v1.Pod))
@@ -640,6 +669,60 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 		}
 	}
 	return victims, true
+}
+
+// nodesWherePreemptionMightHelp returns a list of nodes with failed predicates
+// that may be satisfied by removing pods from the node.
+func nodesWherePreemptionMightHelp(pod *v1.Pod, failedPredicatesMap FailedPredicateMap) map[string]bool {
+	nodes := map[string]bool{}
+	for nodeName, failedPredicates := range failedPredicatesMap {
+		unresolvableReasonExist := false
+		for _, failedPredicate := range failedPredicates {
+			switch failedPredicate {
+			case
+				predicates.ErrNodeSelectorNotMatch,
+				predicates.ErrPodNotMatchHostName,
+				predicates.ErrTaintsTolerationsNotMatch,
+				predicates.ErrNodeLabelPresenceViolated:
+				unresolvableReasonExist = true
+				break
+			case predicates.ErrPodAffinityNotMatch:
+				// if pod didn't schedule due to pod affinity/anti-affinity and it doesn't
+				// have any anti-affinity rule, it has failed due to pod affinity. So,
+				// removing any pod from the node does not help.
+				affinity := pod.Spec.Affinity
+				if affinity != nil && affinity.PodAntiAffinity == nil {
+					unresolvableReasonExist = true
+					break
+				}
+			}
+		}
+		if !unresolvableReasonExist {
+			nodes[nodeName] = true
+		}
+	}
+	return nodes
+}
+
+// isPodEligibileForPreemption determines whether this pod should be considered
+// for preempting other pods or not. If this pod has already preempted other
+// pods and those are in their graceful termination period, it shouldn't be
+// considered for preemption.
+// We look at the node that is nominated for this pod and as long as there are
+// terminating pods on the node, we don't consider this for preempting more pods.
+// TODO(bsalamat): Revisit this algorithm once scheduling by priority is added.
+func isPodEligibleForPreemption(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) bool {
+	if nodeName, found := pod.Annotations[NominatedNodeAnnotationKey]; found {
+		if nodeInfo, found := nodeNameToInfo[nodeName]; found {
+			for _, pod := range nodeInfo.Pods() {
+				if pod.DeletionTimestamp != nil {
+					// There is a terminating pod on the nominated node.
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func NewGenericScheduler(

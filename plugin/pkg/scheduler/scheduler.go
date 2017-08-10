@@ -24,11 +24,13 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/core"
@@ -48,6 +50,13 @@ type Binder interface {
 // PodCondition
 type PodConditionUpdater interface {
 	Update(pod *v1.Pod, podCondition *v1.PodCondition) error
+}
+
+// PodPreemptor has methods needed to evict a pod and to update
+// annotations of a the preemptor pod.
+type PodPreemptor interface {
+	EvictPod(pod *v1.Pod) error
+	UpdatePodAnnotations(pod *v1.Pod, annots map[string]string) error
 }
 
 // Scheduler watches for new unscheduled pods. It attempts to find
@@ -104,6 +113,8 @@ type Config struct {
 	// with scheduling, PodScheduled condition will be updated in apiserver in /bind
 	// handler so that binding and setting PodCondition it is atomic.
 	PodConditionUpdater PodConditionUpdater
+	// PodPreemptor is used to evict pods and update pod annotations.
+	PodPreemptor PodPreemptor
 
 	// NextPod should be a function that blocks until the next pod
 	// is available. We don't use a channel for this, because scheduling
@@ -181,6 +192,34 @@ func (sched *Scheduler) schedule(pod *v1.Pod) (string, error) {
 		return "", err
 	}
 	return host, err
+}
+
+func (sched *Scheduler) preempt(pod *v1.Pod, scheduleErr error) (string, error) {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.PodPriority) {
+		glog.V(3).Infof("Pod priority feature is not enabled. No preemption is performed.")
+		return "", nil
+	}
+	nodeName, pods, err := sched.config.Algorithm.Preempt(pod, sched.config.NodeLister, scheduleErr)
+	if err != nil {
+		glog.Errorf("Error preempting pods to make room for %v/%v.", pod.Namespace, pod.Name)
+	}
+	if len(nodeName) != 0 {
+		glog.Infof("Preempting %d pods on node %v to make room for %v/%v.", len(pods), nodeName, pod.Namespace, pod.Name)
+		annotations := map[string]string{core.NominatedNodeAnnotationKey: nodeName}
+		err = sched.config.PodPreemptor.UpdatePodAnnotations(pod, annotations)
+		if err != nil {
+			glog.Errorf("Cannot update pod %v annotations: %v", pod.Name, err)
+			return "", err
+		}
+		for _, pod := range pods {
+			if err := sched.config.PodPreemptor.EvictPod(pod); err != nil {
+				glog.Errorf("Error preempting pod %v: %v", pod.Name, err)
+				return "", err
+			}
+			sched.config.Recorder.Eventf(pod, v1.EventTypeNormal, "Preempted", "by %v/%v on node %v", pod.Namespace, pod.Name, nodeName)
+		}
+	}
+	return nodeName, err
 }
 
 // assume signals to the cache that a pod is already in the cache, so that binding can be asnychronous.
@@ -265,6 +304,7 @@ func (sched *Scheduler) scheduleOne() {
 	suggestedHost, err := sched.schedule(pod)
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInMicroseconds(start))
 	if err != nil {
+		sched.preempt(pod, err)
 		return
 	}
 

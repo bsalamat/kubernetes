@@ -25,6 +25,7 @@ import (
 
 	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
+	policy "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -709,6 +710,7 @@ func (f *ConfigFactory) CreateFromKeys(predicateKeys, priorityKeys sets.String, 
 		Algorithm:           algo,
 		Binder:              f.getBinder(extenders),
 		PodConditionUpdater: &podConditionUpdater{f.client},
+		PodPreemptor:        &podPreemptor{f.client},
 		WaitForCacheSync: func() bool {
 			return cache.WaitForCacheSync(f.StopEverything, f.scheduledPodsHasSynced)
 		},
@@ -983,4 +985,44 @@ func (p *podConditionUpdater) Update(pod *v1.Pod, condition *v1.PodCondition) er
 		return err
 	}
 	return nil
+}
+
+func newEvictionPolicy(pod *v1.Pod) *policy.Eviction {
+	return &policy.Eviction{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "Policy/v1beta1",
+			Kind:       "Eviction",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+		},
+		DeleteOptions: &metav1.DeleteOptions{
+			GracePeriodSeconds: pod.DeletionGracePeriodSeconds,
+		},
+	}
+}
+
+type podPreemptor struct {
+	Client clientset.Interface
+}
+
+func (p *podPreemptor) EvictPod(pod *v1.Pod) error {
+	if err := p.Client.CoreV1().Pods(pod.Namespace).Evict(newEvictionPolicy(pod)); err != nil {
+		glog.V(1).Infof("Error evicting pod %v: %v", pod.Name, err)
+		return err
+	}
+	return nil
+}
+
+func (p *podPreemptor) UpdatePodAnnotations(pod *v1.Pod, annotations map[string]string) error {
+	podCopy := pod.DeepCopy()
+	if podCopy.Annotations == nil {
+		podCopy.Annotations = map[string]string{}
+	}
+	for k, v := range annotations {
+		podCopy.Annotations[k] = v
+	}
+	_, err := p.Client.CoreV1().Pods(podCopy.Namespace).Update(podCopy)
+	return err
 }
