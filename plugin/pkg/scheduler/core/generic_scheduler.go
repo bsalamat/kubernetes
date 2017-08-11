@@ -520,9 +520,10 @@ func selectVictimsOnNode(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache
 				return nil, false
 			}
 		}
-		// If we reach here, it means that the pod cannot be scheduled only due to
-		// pod affinity. Let's try adding pods one at a time and see if any of them
-		// satisfies the pod affinity rules.
+		// If we reach here, it means that the pod cannot be scheduled due to pod
+		// affinity or anti-affinity. Since failure reason for both affinity and
+		// anti-affinity is the same, we cannot say which one caused it. So, we try
+		// adding pods one at a time and see if any of them satisfies the affinity rules.
 		for i, p := range potentialVictims.Items {
 			existingPod := p.(*v1.Pod)
 			nodeInfoCopy.AddPod(existingPod)
