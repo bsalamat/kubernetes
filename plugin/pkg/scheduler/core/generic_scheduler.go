@@ -456,56 +456,71 @@ func EqualPriorityMap(_ *v1.Pod, _ interface{}, nodeInfo *schedulercache.NodeInf
 // 4. If there are still ties, the first such node in the map is picked (sort of randomly).
 func pickOneNodeForPreemption(nodesToPods map[string][]*v1.Pod) string {
 	type nodeScore struct {
+		nodeName        string
 		highestPriority int32
 		sumPriorities   int64
 		numPods         int
 	}
-	nodesToScore := map[string]nodeScore{}
+	if len(nodesToPods) == 0 {
+		return ""
+	}
 	minHighestPriority := int32(math.MaxInt32)
-	minSumPriorities := int64(math.MaxInt64)
-	minNumPods := math.MaxInt32
+	nodeScores := []*nodeScore{}
 	for nodeName, pods := range nodesToPods {
 		// highestPodPriority is the highest priority among the victims on this node.
 		highestPodPriority := util.GetPodPriority(pods[0])
 		if highestPodPriority < minHighestPriority {
 			minHighestPriority = highestPodPriority
 		}
-		var sumPriorities int64
-		for _, pod := range pods {
-			// We add MaxInt32+1 to all priorities to make all of them >= 0. This is
-			// needed so that a node with a few pods with negative priority is not
-			// picked over a node with a smaller number of pods with the same negative
-			// priority (and similar scenarios).
-			sumPriorities += int64(util.GetPodPriority(pod)) + int64(math.MaxInt32+1)
-		}
-		if sumPriorities < minSumPriorities {
-			minSumPriorities = sumPriorities
-		}
-		numPods := len(pods)
-		if numPods < minNumPods {
-			minNumPods = numPods
-		}
-		nodesToScore[nodeName] = nodeScore{highestPodPriority, sumPriorities, numPods}
+		nodeScores = append(nodeScores, &nodeScore{nodeName: nodeName, highestPriority: highestPodPriority, numPods: len(pods)})
 	}
-	theNode := "" // Picked node
-	maxScore := math.MinInt32
-	for nodeName, nodeScore := range nodesToScore {
-		score := 0
+	// Find the nodes with minimum highest priority victim.
+	minSumPriorities := int64(math.MaxInt64)
+	lowestHighPriorityNodes := []*nodeScore{}
+	for _, nodeScore := range nodeScores {
 		if nodeScore.highestPriority == minHighestPriority {
-			score += 1024
-		}
-		if nodeScore.sumPriorities == minSumPriorities {
-			score += 512
-		}
-		if nodeScore.numPods == minNumPods {
-			score += 256
-		}
-		if score > maxScore {
-			maxScore = score
-			theNode = nodeName
+			lowestHighPriorityNodes = append(lowestHighPriorityNodes, nodeScore)
+			var sumPriorities int64
+			for _, pod := range nodesToPods[nodeScore.nodeName] {
+				// We add MaxInt32+1 to all priorities to make all of them >= 0. This is
+				// needed so that a node with a few pods with negative priority is not
+				// picked over a node with a smaller number of pods with the same negative
+				// priority (and similar scenarios).
+				sumPriorities += int64(util.GetPodPriority(pod)) + int64(math.MaxInt32+1)
+			}
+			if sumPriorities < minSumPriorities {
+				minSumPriorities = sumPriorities
+			}
+			nodeScore.sumPriorities = sumPriorities
 		}
 	}
-	return theNode
+	if len(lowestHighPriorityNodes) == 1 {
+		return lowestHighPriorityNodes[0].nodeName
+	}
+	// There are multiple nodes with the same minimum highest priority victim.
+	// Choose the one(s) with lowest sum of priorities.
+	minNumPods := math.MaxInt32
+	lowestSumPriorityNodes := []*nodeScore{}
+	for _, nodeScore := range lowestHighPriorityNodes {
+		if nodeScore.sumPriorities == minSumPriorities {
+			lowestSumPriorityNodes = append(lowestSumPriorityNodes, nodeScore)
+			if nodeScore.numPods < minNumPods {
+				minNumPods = nodeScore.numPods
+			}
+		}
+	}
+	if len(lowestSumPriorityNodes) == 1 {
+		return lowestSumPriorityNodes[0].nodeName
+	}
+	// There are still more than one node with minimum highest priority victim and
+	// lowest sum of victim priorities. Find the anyone with minimum number of victims.
+	for _, nodeScore := range lowestSumPriorityNodes {
+		if nodeScore.numPods == minNumPods {
+			return nodeScore.nodeName
+		}
+	}
+	glog.Errorf("We should never reach here!")
+	return ""
 }
 
 // selectNodesForPreemption finds all the nodes with possible victims for

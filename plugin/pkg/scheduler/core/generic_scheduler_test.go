@@ -634,7 +634,7 @@ var veryLargeContainers = []v1.Container{
 		},
 	},
 }
-var negPriority, lowPriority, midPriority, highPriority = int32(-100), int32(0), int32(100), int32(1000)
+var negPriority, lowPriority, midPriority, highPriority, veryHighPriority = int32(-100), int32(0), int32(100), int32(1000), int32(10000)
 
 // TestSelectNodesForPreemption tests selectNodesForPreemption. This test assumes
 // that podsFitsOnNode works correctly and is tested separately.
@@ -908,6 +908,30 @@ func TestPickOneNodeForPreemption(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Name: "m3.3"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &lowPriority, NodeName: "machine3"}},
 			},
 			expected: []string{"machine2"},
+		},
+		{
+			name:       "non-overlapping lowest high priority, sum priorities, and number of pods",
+			predicates: map[string]algorithm.FitPredicate{"matches": algorithmpredicates.PodFitsResources},
+			nodes:      []string{"machine1", "machine2", "machine3", "machine4"},
+			pod:        &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1"}, Spec: v1.PodSpec{Containers: veryLargeContainers, Priority: &veryHighPriority}},
+			pods: []*v1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "m1.1"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &midPriority, NodeName: "machine1"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m1.2"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &lowPriority, NodeName: "machine1"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m1.3"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &lowPriority, NodeName: "machine1"}},
+
+				{ObjectMeta: metav1.ObjectMeta{Name: "m2.1"}, Spec: v1.PodSpec{Containers: largeContainers, Priority: &highPriority, NodeName: "machine2"}},
+
+				{ObjectMeta: metav1.ObjectMeta{Name: "m3.1"}, Spec: v1.PodSpec{Containers: mediumContainers, Priority: &midPriority, NodeName: "machine3"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m3.2"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &lowPriority, NodeName: "machine3"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m3.3"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &lowPriority, NodeName: "machine3"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m3.4"}, Spec: v1.PodSpec{Containers: mediumContainers, Priority: &lowPriority, NodeName: "machine3"}},
+
+				{ObjectMeta: metav1.ObjectMeta{Name: "m4.1"}, Spec: v1.PodSpec{Containers: mediumContainers, Priority: &midPriority, NodeName: "machine4"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m4.2"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &midPriority, NodeName: "machine4"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m4.3"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &midPriority, NodeName: "machine4"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "m4.4"}, Spec: v1.PodSpec{Containers: smallContainers, Priority: &negPriority, NodeName: "machine4"}},
+			},
+			expected: []string{"machine1"},
 		},
 	}
 	for _, test := range tests {
