@@ -461,7 +461,7 @@ func selectNodesForPreemption(pod *v1.Pod,
 	meta := metadataProducer(pod, nodeNameToInfo)
 	checkNode := func(i int) {
 		nodeName := nodes[i].Name
-		pods, fits := selectVictimsOnNode(pod, meta, nodeNameToInfo[nodeName], predicates)
+		pods, fits := selectVictimsOnNode(pod, meta.ShallowCopy(), nodeNameToInfo[nodeName], predicates)
 		if fits && len(pods) != 0 {
 			resultLock.Lock()
 			nodeNameToPods[nodeName] = pods
@@ -490,13 +490,22 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 	}
 	potentialVictims := util.SortableList{CompFunc: higherPriority}
 	nodeInfoCopy := nodeInfo.Clone()
+
+	removePod := func(rp *v1.Pod) {
+		nodeInfoCopy.RemovePod(rp)
+		meta.RemovePod(rp)
+	}
+	addPod := func(ap *v1.Pod) {
+		nodeInfoCopy.AddPod(ap)
+		meta.AddPod(ap, nodeInfoCopy)
+	}
 	// As the first step, remove all the lower priority pods from the node and
 	// check if the given pod can be scheduled.
 	podPriority := util.GetPodPriority(pod)
 	for _, p := range nodeInfoCopy.Pods() {
 		if util.GetPodPriority(p) < podPriority {
 			potentialVictims.Items = append(potentialVictims.Items, p)
-			nodeInfoCopy.RemovePod(p)
+			removePod(p)
 		}
 	}
 	potentialVictims.Sort()
@@ -526,9 +535,9 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 		// adding pods one at a time and see if any of them satisfies the affinity rules.
 		for i, p := range potentialVictims.Items {
 			existingPod := p.(*v1.Pod)
-			nodeInfoCopy.AddPod(existingPod)
+			addPod(existingPod)
 			if fits, _, _ = podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil); !fits {
-				nodeInfoCopy.RemovePod(existingPod)
+				removePod(existingPod)
 			} else {
 				// We found the pod needed to satisfy pod affinity. Let's remove it from
 				// potential victims list.
@@ -546,9 +555,9 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 	// Try to reprieve as may pods as possible starting from the highest priority one.
 	for _, p := range potentialVictims.Items {
 		lpp := p.(*v1.Pod)
-		nodeInfoCopy.AddPod(lpp)
+		addPod(lpp)
 		if fits, _, _ := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil); !fits {
-			nodeInfoCopy.RemovePod(lpp)
+			removePod(lpp)
 			victims = append(victims, lpp)
 		}
 	}

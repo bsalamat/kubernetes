@@ -562,7 +562,7 @@ func checkPreemptionVictims(testName string, expected map[string]map[string]bool
 					}
 					prevPriority = *p.Spec.Priority
 					if _, ok := expPods[p.Name]; !ok {
-						return fmt.Errorf("test [%v]: pod %v was not expected", testName, p.Name)
+						return fmt.Errorf("test [%v]: pod %v was not expected. Expected: %v", testName, p.Name, expPods)
 					}
 				}
 			} else {
@@ -626,7 +626,6 @@ func TestSelectNodesForPreemption(t *testing.T) {
 		},
 	}
 	lowPriority, midPriority, highPriority := int32(0), int32(100), int32(1000)
-	//largePodMedPriority:=
 	tests := []struct {
 		name                 string
 		predicates           map[string]algorithm.FitPredicate
@@ -711,7 +710,7 @@ func TestSelectNodesForPreemption(t *testing.T) {
 			expected: map[string]map[string]bool{"machine1": {"b": true, "c": true}},
 		},
 		{
-			name:       "lower priority pods is not preempted to satisfy pod affinity",
+			name:       "lower priority pod is not preempted to satisfy pod affinity",
 			predicates: map[string]algorithm.FitPredicate{"matches": algorithmpredicates.PodFitsResources},
 			nodes:      []string{"machine1", "machine2"},
 			pod: &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "machine1"}, Spec: v1.PodSpec{Containers: largeContainers, Priority: &highPriority, Affinity: &v1.Affinity{
