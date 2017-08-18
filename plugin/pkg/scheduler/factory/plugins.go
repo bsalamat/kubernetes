@@ -46,7 +46,11 @@ type PluginFactoryArgs struct {
 }
 
 // MetadataProducerFactory produces MetadataProducer from the given args.
+// TODO: Rename this to PriorityMetadataProducerFactory.
 type MetadataProducerFactory func(PluginFactoryArgs) algorithm.MetadataProducer
+
+// PredicateMetadataProducerFactory produces PredicateMetadataProducer from the given args.
+type PredicateMetadataProducerFactory func(PluginFactoryArgs) algorithm.PredicateMetadataProducer
 
 // A FitPredicateFactory produces a FitPredicate from the given args.
 type FitPredicateFactory func(PluginFactoryArgs) algorithm.FitPredicate
@@ -79,7 +83,7 @@ var (
 
 	// Registered metadata producers
 	priorityMetadataProducer  MetadataProducerFactory
-	predicateMetadataProducer MetadataProducerFactory
+	predicateMetadataProducer PredicateMetadataProducerFactory
 
 	// get equivalence pod function
 	getEquivalencePodFunc algorithm.GetEquivalencePodFunc
@@ -179,7 +183,7 @@ func RegisterPriorityMetadataProducerFactory(factory MetadataProducerFactory) {
 	priorityMetadataProducer = factory
 }
 
-func RegisterPredicateMetadataProducerFactory(factory MetadataProducerFactory) {
+func RegisterPredicateMetadataProducerFactory(factory PredicateMetadataProducerFactory) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 	predicateMetadataProducer = factory
@@ -341,12 +345,12 @@ func getPriorityMetadataProducer(args PluginFactoryArgs) (algorithm.MetadataProd
 	return priorityMetadataProducer(args), nil
 }
 
-func getPredicateMetadataProducer(args PluginFactoryArgs) (algorithm.MetadataProducer, error) {
+func getPredicateMetadataProducer(args PluginFactoryArgs) (algorithm.PredicateMetadataProducer, error) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 
 	if predicateMetadataProducer == nil {
-		return algorithm.EmptyMetadataProducer, nil
+		return algorithm.EmptyPredicateMetadataProducer, nil
 	}
 	return predicateMetadataProducer(args), nil
 }
