@@ -714,8 +714,8 @@ func nodesWherePreemptionMightHelp(pod *v1.Pod, failedPredicatesMap FailedPredic
 func isPodEligibleForPreemption(pod *v1.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo) bool {
 	if nodeName, found := pod.Annotations[NominatedNodeAnnotationKey]; found {
 		if nodeInfo, found := nodeNameToInfo[nodeName]; found {
-			for _, pod := range nodeInfo.Pods() {
-				if pod.DeletionTimestamp != nil {
+			for _, p := range nodeInfo.Pods() {
+				if p.DeletionTimestamp != nil && util.GetPodPriority(p) < util.GetPodPriority(pod) {
 					// There is a terminating pod on the nominated node.
 					return false
 				}
