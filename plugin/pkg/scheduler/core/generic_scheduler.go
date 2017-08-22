@@ -174,6 +174,10 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 		glog.V(10).Infof("scheduleErr is not of type FitError")
 		return "", nil, nil
 	}
+	err := g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
+	if err != nil {
+		return "", nil, err
+	}
 	if !isPodEligibleForPreemption(pod, g.cachedNodeInfoMap) {
 		glog.V(5).Infof("Pod %v is not eligible for more preemption.", pod.Name)
 		return "", nil, nil
@@ -604,11 +608,15 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 
 	removePod := func(rp *v1.Pod) {
 		nodeInfoCopy.RemovePod(rp)
-		meta.RemovePod(rp)
+		if meta != nil {
+			meta.RemovePod(rp)
+		}
 	}
 	addPod := func(ap *v1.Pod) {
 		nodeInfoCopy.AddPod(ap)
-		meta.AddPod(ap, nodeInfoCopy)
+		if meta != nil {
+			meta.AddPod(ap, nodeInfoCopy)
+		}
 	}
 	// As the first step, remove all the lower priority pods from the node and
 	// check if the given pod can be scheduled.
