@@ -17,18 +17,21 @@ limitations under the License.
 package scheduling
 
 import (
+	"fmt"
 	"time"
 
 	"k8s.io/api/core/v1"
+	"k8s.io/api/scheduling/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	_ "github.com/stretchr/testify/assert"
-	"k8s.io/api/scheduling/v1alpha1"
 )
 
 var _ = SIGDescribe("SchedulerPreemption [Serial]", func() {
@@ -38,27 +41,33 @@ var _ = SIGDescribe("SchedulerPreemption [Serial]", func() {
 	var ns string
 	f := framework.NewDefaultFramework("sched-preemption")
 	ignoreLabels := framework.ImagePullerLabels
-	ns = f.Namespace.Name
 
 	lowPriority, highPriority := int32(100), int32(1000)
-	lowPriorityClassName := ns + "-low-priority"
-	highPriorityClassName := ns + "-high-priority"
-	_, err := f.ClientSet.SchedulingV1alpha1().PriorityClasses().Create(&v1alpha1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: highPriorityClassName}, Value: highPriority})
-	framework.ExpectNoError(err)
-	_, err = f.ClientSet.SchedulingV1alpha1().PriorityClasses().Create(&v1alpha1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: lowPriorityClassName}, Value: lowPriority})
-	framework.ExpectNoError(err)
+	lowPriorityClassName := f.BaseName + "-low-priority"
+	highPriorityClassName := f.BaseName + "-high-priority"
 
 	AfterEach(func() {
 	})
 
 	BeforeEach(func() {
 		cs = f.ClientSet
+		ns = f.Namespace.Name
 		nodeList = &v1.NodeList{}
+
+		utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+		pcs, err := cs.SchedulingV1alpha1().PriorityClasses().List(metav1.ListOptions{})
+		framework.ExpectNoError(err)
+		if len(pcs.Items) == 0 {
+			_, err := f.ClientSet.SchedulingV1alpha1().PriorityClasses().Create(&v1alpha1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: highPriorityClassName}, Value: highPriority})
+			framework.ExpectNoError(err)
+			_, err = f.ClientSet.SchedulingV1alpha1().PriorityClasses().Create(&v1alpha1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: lowPriorityClassName}, Value: lowPriority})
+			framework.ExpectNoError(err)
+		}
 
 		framework.WaitForAllNodesHealthy(cs, time.Minute)
 		masterNodes, nodeList = framework.GetMasterAndWorkerNodesOrDie(cs)
 
-		err := framework.CheckTestingNSDeletedExcept(cs, ns)
+		err = framework.CheckTestingNSDeletedExcept(cs, ns)
 		framework.ExpectNoError(err)
 
 		// Every test case in this suite assumes that cluster add-on pods stay stable and
