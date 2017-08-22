@@ -178,16 +178,16 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 		glog.V(5).Infof("Pod %v is not eligible for more preemption.", pod.Name)
 		return "", nil, nil
 	}
-	potentialNodeNames := nodesWherePreemptionMightHelp(pod, fitError.FailedPredicates)
-	if len(potentialNodeNames) == 0 {
-		return "", nil, nil
-	}
 	allNodes, err := nodeLister.List()
 	if err != nil {
 		return "", nil, err
 	}
 	if len(allNodes) == 0 {
 		return "", nil, ErrNoNodesAvailable
+	}
+	potentialNodeNames := nodesWherePreemptionMightHelp(pod, allNodes, fitError.FailedPredicates)
+	if len(potentialNodeNames) == 0 {
+		return "", nil, nil
 	}
 	nodeToPods := selectNodesForPreemption(pod, g.cachedNodeInfoMap, allNodes, potentialNodeNames, g.predicates, g.predicateMetaProducer)
 	if len(nodeToPods) == 0 {
@@ -567,7 +567,11 @@ func selectNodesForPreemption(pod *v1.Pod,
 				return
 			}
 		}
-		pods, fits := selectVictimsOnNode(pod, meta.ShallowCopy(), nodeNameToInfo[nodeName], predicates)
+		var metaCopy algorithm.PredicateMetadata
+		if meta != nil {
+			metaCopy = meta.ShallowCopy()
+		}
+		pods, fits := selectVictimsOnNode(pod, metaCopy, nodeNameToInfo[nodeName], predicates)
 		if fits && len(pods) != 0 {
 			resultLock.Lock()
 			nodeNameToPods[nodeName] = pods
@@ -673,35 +677,38 @@ func selectVictimsOnNode(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo
 
 // nodesWherePreemptionMightHelp returns a list of nodes with failed predicates
 // that may be satisfied by removing pods from the node.
-func nodesWherePreemptionMightHelp(pod *v1.Pod, failedPredicatesMap FailedPredicateMap) map[string]bool {
-	nodes := map[string]bool{}
-	for nodeName, failedPredicates := range failedPredicatesMap {
+func nodesWherePreemptionMightHelp(pod *v1.Pod, nodes []*v1.Node, failedPredicatesMap FailedPredicateMap) map[string]bool {
+	potentialNodes := map[string]bool{}
+	for _, node := range nodes {
 		unresolvableReasonExist := false
-		for _, failedPredicate := range failedPredicates {
-			switch failedPredicate {
-			case
-				predicates.ErrNodeSelectorNotMatch,
-				predicates.ErrPodNotMatchHostName,
-				predicates.ErrTaintsTolerationsNotMatch,
-				predicates.ErrNodeLabelPresenceViolated:
-				unresolvableReasonExist = true
-				break
-			case predicates.ErrPodAffinityNotMatch:
-				// if pod didn't schedule due to pod affinity/anti-affinity and it doesn't
-				// have any anti-affinity rule, it has failed due to pod affinity. So,
-				// removing any pod from the node does not help.
-				affinity := pod.Spec.Affinity
-				if affinity != nil && affinity.PodAntiAffinity == nil {
+		failedPredicates, found := failedPredicatesMap[node.Name]
+		if found {
+			for _, failedPredicate := range failedPredicates {
+				switch failedPredicate {
+				case
+					predicates.ErrNodeSelectorNotMatch,
+					predicates.ErrPodNotMatchHostName,
+					predicates.ErrTaintsTolerationsNotMatch,
+					predicates.ErrNodeLabelPresenceViolated:
 					unresolvableReasonExist = true
 					break
+				case predicates.ErrPodAffinityNotMatch:
+					// if pod didn't schedule due to pod affinity/anti-affinity and it doesn't
+					// have any anti-affinity rule, it has failed due to pod affinity. So,
+					// removing any pod from the node does not help.
+					affinity := pod.Spec.Affinity
+					if affinity != nil && affinity.PodAntiAffinity == nil {
+						unresolvableReasonExist = true
+						break
+					}
 				}
 			}
 		}
-		if !unresolvableReasonExist {
-			nodes[nodeName] = true
+		if !found || !unresolvableReasonExist {
+			potentialNodes[node.Name] = true
 		}
 	}
-	return nodes
+	return potentialNodes
 }
 
 // isPodEligibileForPreemption determines whether this pod should be considered
