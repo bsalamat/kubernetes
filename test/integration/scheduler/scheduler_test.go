@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 	"k8s.io/kubernetes/test/integration/framework"
+	testutils "k8s.io/kubernetes/test/utils"
 )
 
 const enableEquivalenceCache = true
@@ -651,7 +652,8 @@ func TestAllocatable(t *testing.T) {
 	}
 }
 
-func TestPreemption(t *testing.T) {
+// TestPreemptionBasic tests that basic preemption logic works.
+func TestPreemptionBasic(t *testing.T) {
 	// Enable PodPriority feature gate.
 	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
 	// Initialize scheduler.
@@ -664,6 +666,9 @@ func TestPreemption(t *testing.T) {
 		v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI),
 	}
 	_, err := createNode(context.clientSet, "node1", nodeRes)
+	if err != nil {
+		t.Fatalf("Error creating nodes: %v", err)
+	}
 	// Run a low priority pod that uses all the node resources.
 	lowPriority, highPriority := int32(100), int32(1000)
 	victim, err := runPausePod(context.clientSet, initPausePod(context.clientSet, &pausePodConfig{
@@ -692,11 +697,142 @@ func TestPreemption(t *testing.T) {
 		t.Errorf("Error while creating high priority pod: %v", err)
 	}
 	// Check that the lower priority pod is preempted.
-	if err = wait.Poll(time.Second, 5*time.Second, podIsGettingEvicted(context.clientSet, victim.Namespace, victim.Name)); err != nil {
+	if err = wait.Poll(time.Second, 30*time.Second, podIsGettingEvicted(context.clientSet, victim.Namespace, victim.Name)); err != nil {
 		t.Errorf("Victim pod is not getting evicted.")
 	}
 	// Also check that the preemptor pod gets the annotation for nominated node name.
-	if err = wait.Poll(time.Second, 5*time.Second, func() (bool, error) {
+	if err = wait.Poll(time.Second, 30*time.Second, func() (bool, error) {
+		pod, err := context.clientSet.CoreV1().Pods(context.ns.Name).Get("preemptor-pod", metav1.GetOptions{})
+		if err != nil {
+			t.Errorf("error: %v", err)
+		}
+		annot, found := pod.Annotations[core.NominatedNodeAnnotationKey]
+		if found && len(annot) > 0 {
+			return true, nil
+		}
+		return false, err
+	}); err != nil {
+		t.Errorf("Pod annotation did not get set.")
+	}
+}
+
+// TestPreemptionAffinity tests that inter-pod affinity is handled correctly in
+// preemption.
+// Scenario:
+// 1. Create several low and mid priority pods.
+// 2. Create a high priority pod with affinity rules that is satisfied by multiple
+//    lower priority pods.
+// 3. Check that medium priority pods are preempted and lower priority pods are
+//    kept so that inter-pod affinity is satisfied.
+func TestPreemptionPodAffinity(t *testing.T) {
+	// Enable PodPriority feature gate.
+	utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%s=true", features.PodPriority))
+	// Initialize scheduler.
+	context := initTest(t, "preemption")
+	defer cleanupTest(t, context)
+
+	// Create a node with some resources and a label.
+	nodeRes := &v1.ResourceList{
+		v1.ResourcePods:   *resource.NewQuantity(32, resource.DecimalSI),
+		v1.ResourceCPU:    *resource.NewMilliQuantity(500, resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(500, resource.BinarySI),
+	}
+	node, err := createNode(context.clientSet, "node1", nodeRes)
+	if err != nil {
+		t.Fatalf("Error creating nodes: %v", err)
+	}
+	nodeLabels := map[string]string{"node": node.Name}
+	if err = testutils.AddLabelsToNode(context.clientSet, node.Name, nodeLabels); err != nil {
+		t.Fatalf("Cannot add labels to node: %v", err)
+	}
+	if err = waitForNodeLabels(context.clientSet, node.Name, nodeLabels); err != nil {
+		t.Fatalf("Adding labels to node didn't succeed: %v", err)
+	}
+
+	// Run a low priority pod that uses all the node resources.
+	lowPriority, mediumPriority, highPriority := int32(100), int32(200), int32(300)
+	podRes := &v1.ResourceRequirements{Requests: v1.ResourceList{
+		v1.ResourceCPU:    *resource.NewMilliQuantity(100, resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(100, resource.BinarySI)},
+	}
+	pods := make([]*v1.Pod, 4)
+	for i := 0; i < 4; i++ {
+		// Make pod-0 and pod-1 medium priority and pod-2 and pod-3 low priority.
+		priority := &mediumPriority
+		if i >= 2 {
+			priority = &lowPriority
+		}
+		pods[i], err = runPausePod(context.clientSet, initPausePod(context.clientSet, &pausePodConfig{
+			Name:      fmt.Sprintf("pod-%d", i),
+			Namespace: context.ns.Name,
+			Priority:  priority,
+			Resources: podRes,
+			Labels:    map[string]string{"pod": fmt.Sprintf("p%d", i)},
+		}))
+		if err != nil {
+			t.Fatalf("Error running pause pod: %v", err)
+		}
+	}
+
+	// Now run a higher priority pod with affinity on the lower priority pods and
+	// make sure that the pod is scheduled.
+	_, err = createPausePod(context.clientSet, &pausePodConfig{
+		Name:      "preemptor-pod",
+		Namespace: context.ns.Name,
+		Priority:  &highPriority,
+		Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
+			v1.ResourceCPU:    *resource.NewMilliQuantity(300, resource.DecimalSI),
+			v1.ResourceMemory: *resource.NewQuantity(300, resource.BinarySI)},
+		},
+		Affinity: &v1.Affinity{
+			PodAffinity: &v1.PodAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+					{
+						LabelSelector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{
+								{
+									Key:      "pod",
+									Operator: metav1.LabelSelectorOpIn,
+									Values:   []string{"p2", "foo"},
+								},
+							},
+						},
+						TopologyKey: "node",
+					},
+					{
+						LabelSelector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{
+								{
+									Key:      "pod",
+									Operator: metav1.LabelSelectorOpIn,
+									Values:   []string{"p3", "bar"},
+								},
+							},
+						},
+						TopologyKey: "node",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Errorf("Error while creating high priority pod: %v", err)
+	}
+
+	// Check that the medium priority pods (pod-0 and pod-1) are preempted and
+	// the lower priority ones (pod-2 and pod-3) stay.
+	for i := 0; i < 2; i++ {
+		if err = wait.Poll(time.Second, 30*time.Second, podIsGettingEvicted(context.clientSet, pods[i].Namespace, pods[i].Name)); err != nil {
+			t.Errorf("Pod %v is not getting evicted.", pods[i].Name)
+		}
+	}
+	for i := 2; i < 4; i++ {
+		if pods[i].DeletionTimestamp != nil {
+			t.Errorf("Didn't expect pod %v to get preempted.", pods[i].Name)
+		}
+	}
+	// Also check that the preemptor pod gets the annotation for nominated node name.
+	if err = wait.Poll(time.Second, 30*time.Second, func() (bool, error) {
 		pod, err := context.clientSet.CoreV1().Pods(context.ns.Name).Get("preemptor-pod", metav1.GetOptions{})
 		if err != nil {
 			t.Errorf("error: %v", err)

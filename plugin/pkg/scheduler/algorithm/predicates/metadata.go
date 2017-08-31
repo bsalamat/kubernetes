@@ -179,7 +179,9 @@ func (meta *predicateMetadata) ShallowCopy() algorithm.PredicateMetadata {
 	for k, v := range meta.matchingAntiAffinityTerms {
 		newPredMeta.matchingAntiAffinityTerms[k] = append([]matchingPodAntiAffinityTerm(nil), v...)
 	}
-	newPredMeta.serviceAffinityMatchingPodServices = append([]*v1.Service(nil), meta.serviceAffinityMatchingPodServices...)
-	newPredMeta.serviceAffinityMatchingPodList = append([]*v1.Pod(nil), meta.serviceAffinityMatchingPodList...)
+	newPredMeta.serviceAffinityMatchingPodServices = append([]*v1.Service(nil),
+		meta.serviceAffinityMatchingPodServices...)
+	newPredMeta.serviceAffinityMatchingPodList = append([]*v1.Pod(nil),
+		meta.serviceAffinityMatchingPodList...)
 	return (algorithm.PredicateMetadata)(newPredMeta)
 }

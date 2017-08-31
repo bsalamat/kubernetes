@@ -548,12 +548,24 @@ func TestZeroRequest(t *testing.T) {
 	}
 }
 
+func printNodeToPods(nodeToPods map[*v1.Node][]*v1.Pod) string {
+	var output string
+	for node, pods := range nodeToPods {
+		output += node.Name + ": ["
+		for _, pod := range pods {
+			output += pod.Name + ", "
+		}
+		output += "]"
+	}
+	return output
+}
+
 func checkPreemptionVictims(testName string, expected map[string]map[string]bool, nodeToPods map[*v1.Node][]*v1.Pod) error {
 	if len(expected) == len(nodeToPods) {
 		for k, pods := range nodeToPods {
 			if expPods, ok := expected[k.Name]; ok {
 				if len(pods) != len(expPods) {
-					return fmt.Errorf("test [%v]: unexpected number of pods. expected: %v, got: %v", testName, expected, nodeToPods)
+					return fmt.Errorf("test [%v]: unexpected number of pods. expected: %v, got: %v", testName, expected, printNodeToPods(nodeToPods))
 				}
 				prevPriority := int32(math.MaxInt32)
 				for _, p := range pods {
@@ -567,11 +579,11 @@ func checkPreemptionVictims(testName string, expected map[string]map[string]bool
 					}
 				}
 			} else {
-				return fmt.Errorf("test [%v]: unexpected machines. expected: %v, got: %v", testName, expected, nodeToPods)
+				return fmt.Errorf("test [%v]: unexpected machines. expected: %v, got: %v", testName, expected, printNodeToPods(nodeToPods))
 			}
 		}
 	} else {
-		return fmt.Errorf("test [%v]: unexpected number of machines. expected: %v, got: %v", testName, expected, nodeToPods)
+		return fmt.Errorf("test [%v]: unexpected number of machines. expected: %v, got: %v", testName, expected, printNodeToPods(nodeToPods))
 	}
 	return nil
 }
@@ -793,7 +805,7 @@ func TestSelectNodesForPreemption(t *testing.T) {
 			nodes = append(nodes, node)
 		}
 		if test.addAffinityPredicate {
-			test.predicates["affinity"] = algorithmpredicates.NewPodAffinityPredicate(FakeNodeInfo(*nodes[0]), schedulertesting.FakePodLister(test.pods))
+			test.predicates[predicates.MatchInterPodAffinity] = algorithmpredicates.NewPodAffinityPredicate(FakeNodeInfo(*nodes[0]), schedulertesting.FakePodLister(test.pods))
 		}
 		nodeNameToInfo := schedulercache.CreateNodeNameToInfoMap(test.pods, nodes)
 		nodeToPods, err := selectNodesForPreemption(test.pod, nodeNameToInfo, nodes, test.predicates, PredicateMetadata)

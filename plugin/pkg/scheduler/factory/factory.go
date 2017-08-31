@@ -1001,7 +1001,7 @@ func (p *podPreemptor) GetUpdatedPod(pod *v1.Pod) (*v1.Pod, error) {
 	return p.Client.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
 }
 
-func (p *podPreemptor) PreemptPod(pod *v1.Pod) error {
+func (p *podPreemptor) DeletePod(pod *v1.Pod) error {
 	return p.Client.CoreV1().Pods(pod.Namespace).Delete(pod.Name, &metav1.DeleteOptions{})
 }
 
@@ -1013,6 +1013,6 @@ func (p *podPreemptor) UpdatePodAnnotations(pod *v1.Pod, annotations map[string]
 	for k, v := range annotations {
 		podCopy.Annotations[k] = v
 	}
-	_, err := p.Client.CoreV1().Pods(podCopy.Namespace).Update(podCopy)
+	_, err := p.Client.CoreV1().Pods(podCopy.Namespace).UpdateStatus(podCopy)
 	return err
 }

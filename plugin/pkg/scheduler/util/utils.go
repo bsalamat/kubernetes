@@ -88,3 +88,10 @@ func (l *SortableList) Swap(i, j int) {
 func (l *SortableList) Sort() {
 	sort.Sort(l)
 }
+
+// HigherPriorityPod return true when priority of the first pod is higher than
+// the second one. It takes arguments of the type "interface{}" to be used with
+// SortableList, but expects those arguments to be *v1.Pod.
+func HigherPriorityPod(pod1, pod2 interface{}) bool {
+	return GetPodPriority(pod1.(*v1.Pod)) > GetPodPriority(pod2.(*v1.Pod))
+}

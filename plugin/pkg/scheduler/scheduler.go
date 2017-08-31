@@ -52,11 +52,11 @@ type PodConditionUpdater interface {
 	Update(pod *v1.Pod, podCondition *v1.PodCondition) error
 }
 
-// PodPreemptor has methods needed to evict a pod and to update
+// PodPreemptor has methods needed to delete a pod and to update
 // annotations of the preemptor pod.
 type PodPreemptor interface {
 	GetUpdatedPod(pod *v1.Pod) (*v1.Pod, error)
-	PreemptPod(pod *v1.Pod) error
+	DeletePod(pod *v1.Pod) error
 	UpdatePodAnnotations(pod *v1.Pod, annots map[string]string) error
 }
 
@@ -216,7 +216,7 @@ func (sched *Scheduler) preempt(preemptor *v1.Pod, scheduleErr error) (string, e
 	}
 	var victimNames bytes.Buffer
 	for _, victim := range victims {
-		if err := sched.config.PodPreemptor.PreemptPod(victim); err != nil {
+		if err := sched.config.PodPreemptor.DeletePod(victim); err != nil {
 			glog.Errorf("Error preempting pod %v: %v", victim.Name, err)
 			return "", err
 		}
@@ -313,7 +313,9 @@ func (sched *Scheduler) scheduleOne() {
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
 		// into the resources that were preempted, but this is harmless.
-		sched.preempt(pod, err)
+		if fitError, ok := err.(*core.FitError); ok {
+			sched.preempt(pod, fitError)
+		}
 		return
 	}
 

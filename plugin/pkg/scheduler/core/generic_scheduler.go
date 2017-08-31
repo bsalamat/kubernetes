@@ -170,13 +170,12 @@ func (g *genericScheduler) selectHost(priorityList schedulerapi.HostPriorityList
 
 // preempt finds nodes with pods that can be preempted to make room for "pod" to
 // schedule. It chooses one of the nodes and preempts the pods on the node and
-// returns the node name and the list of preempted pods if such a node is found.
+// returns the node and the list of preempted pods if such a node is found.
 func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister, scheduleErr error) (*v1.Node, []*v1.Pod, error) {
 	// Scheduler may return various types of errors. Consider preemption only if
 	// the error is of type FitError.
 	fitError, ok := scheduleErr.(*FitError)
-	if !ok {
-		glog.V(10).Infof("scheduleErr is not of type FitError")
+	if !ok || fitError == nil {
 		return nil, nil, nil
 	}
 	err := g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
@@ -203,21 +202,19 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(nodeToPods) == 0 {
-		return nil, nil, nil
-	}
 	for len(nodeToPods) > 0 {
 		node := pickOneNodeForPreemption(nodeToPods)
-		if node != nil {
-			if passes, pErr := nodePassesExtendersForPreemption(pod, node.Name, nodeToPods[node], g.cachedNodeInfoMap, allNodes, g.extenders); passes && pErr == nil {
-				return node, nodeToPods[node], err
-			} else {
-				if pErr != nil {
-					glog.Errorf("Error occurred while checking extenders for preemption on node %v: %v", node, pErr)
-				}
-				// Remove the node from the map and try to pick a different node.
-				delete(nodeToPods, node)
+		if node == nil {
+			return nil, nil, err
+		}
+		if passes, pErr := nodePassesExtendersForPreemption(pod, node.Name, nodeToPods[node], g.cachedNodeInfoMap, allNodes, g.extenders); passes && pErr == nil {
+			return node, nodeToPods[node], err
+		} else {
+			if pErr != nil {
+				glog.Errorf("Error occurred while checking extenders for preemption on node %v: %v", node, pErr)
 			}
+			// Remove the node from the map and try to pick a different node.
+			delete(nodeToPods, node)
 		}
 	}
 	return nil, nil, err
@@ -505,7 +502,7 @@ func pickOneNodeForPreemption(nodesToPods map[*v1.Node][]*v1.Pod) *v1.Node {
 		return nil
 	}
 	minHighestPriority := int32(math.MaxInt32)
-	nodeScores := []*nodeScore{}
+	minPriorityScores := []*nodeScore{}
 	for node, pods := range nodesToPods {
 		if len(pods) == 0 {
 			// We found a node that doesn't need any preemption. Return it!
@@ -518,57 +515,59 @@ func pickOneNodeForPreemption(nodesToPods map[*v1.Node][]*v1.Pod) *v1.Node {
 		highestPodPriority := util.GetPodPriority(pods[0])
 		if highestPodPriority < minHighestPriority {
 			minHighestPriority = highestPodPriority
+			minPriorityScores = nil
 		}
 		if highestPodPriority == minHighestPriority {
-			nodeScores = append(nodeScores, &nodeScore{node: node, highestPriority: highestPodPriority, numPods: len(pods)})
+			minPriorityScores = append(minPriorityScores, &nodeScore{node: node, highestPriority: highestPodPriority, numPods: len(pods)})
 		}
 	}
-	// Find the nodes with minimum highest priority victim.
+	if len(minPriorityScores) == 1 {
+		return minPriorityScores[0].node
+	}
+	// There are a few nodes with minimum highest priority victim. Find the
+	// smallest sum of priorities.
 	minSumPriorities := int64(math.MaxInt64)
-	lowestHighPriorityNodes := []*nodeScore{}
-	for _, nodeScore := range nodeScores {
-		if nodeScore.highestPriority == minHighestPriority {
-			lowestHighPriorityNodes = append(lowestHighPriorityNodes, nodeScore)
-			var sumPriorities int64
-			for _, pod := range nodesToPods[nodeScore.node] {
-				// We add MaxInt32+1 to all priorities to make all of them >= 0. This is
-				// needed so that a node with a few pods with negative priority is not
-				// picked over a node with a smaller number of pods with the same negative
-				// priority (and similar scenarios).
-				sumPriorities += int64(util.GetPodPriority(pod)) + int64(math.MaxInt32+1)
-			}
-			if sumPriorities < minSumPriorities {
-				minSumPriorities = sumPriorities
-			}
-			nodeScore.sumPriorities = sumPriorities
+	minSumPriorityScores := []*nodeScore{}
+	for _, nodeScore := range minPriorityScores {
+		var sumPriorities int64
+		for _, pod := range nodesToPods[nodeScore.node] {
+			// We add MaxInt32+1 to all priorities to make all of them >= 0. This is
+			// needed so that a node with a few pods with negative priority is not
+			// picked over a node with a smaller number of pods with the same negative
+			// priority (and similar scenarios).
+			sumPriorities += int64(util.GetPodPriority(pod)) + int64(math.MaxInt32+1)
+		}
+		if sumPriorities < minSumPriorities {
+			minSumPriorities = sumPriorities
+			minSumPriorityScores = nil
+		}
+		nodeScore.sumPriorities = sumPriorities
+		if sumPriorities == minSumPriorities {
+			minSumPriorityScores = append(minSumPriorityScores, nodeScore)
 		}
 	}
-	if len(lowestHighPriorityNodes) == 1 {
-		return lowestHighPriorityNodes[0].node
+	if len(minSumPriorityScores) == 1 {
+		return minSumPriorityScores[0].node
 	}
-	// There are multiple nodes with the same minimum highest priority victim.
-	// Choose the one(s) with lowest sum of priorities.
+	// There a few nodes with minimum highest priority victim and sum of priorities.
+	// Find one with the minimum number of pods.
 	minNumPods := math.MaxInt32
-	lowestSumPriorityNodes := []*nodeScore{}
-	for _, nodeScore := range lowestHighPriorityNodes {
-		if nodeScore.sumPriorities == minSumPriorities {
-			lowestSumPriorityNodes = append(lowestSumPriorityNodes, nodeScore)
-			if nodeScore.numPods < minNumPods {
-				minNumPods = nodeScore.numPods
-			}
+	minNumPodScores := []*nodeScore{}
+	for _, nodeScore := range minSumPriorityScores {
+		if nodeScore.numPods < minNumPods {
+			minNumPods = nodeScore.numPods
+			minNumPodScores = nil
 		}
-	}
-	if len(lowestSumPriorityNodes) == 1 {
-		return lowestSumPriorityNodes[0].node
-	}
-	// There are still more than one node with minimum highest priority victim and
-	// lowest sum of victim priorities. Find the anyone with minimum number of victims.
-	for _, nodeScore := range lowestSumPriorityNodes {
 		if nodeScore.numPods == minNumPods {
-			return nodeScore.node
+			minNumPodScores = append(minPriorityScores, nodeScore)
 		}
 	}
-	glog.Errorf("We should never reach here!")
+	// At this point, even if there are more than one node with the same score,
+	// return the first one.
+	if len(minNumPodScores) > 0 {
+		return minNumPodScores[0].node
+	}
+	glog.Errorf("Error in logic of node scoring for preemption. We should never reach here!")
 	return nil
 }
 
@@ -617,12 +616,12 @@ func nodePassesExtendersForPreemption(
 	// Remove the victims from the corresponding nodeInfo and send nodes to the
 	// extenders for filtering.
 	originalNodeInfo := nodeNameToInfo[nodeName]
-	defer func() { nodeNameToInfo[nodeName] = originalNodeInfo }()
 	nodeInfoCopy := nodeNameToInfo[nodeName].Clone()
 	for _, victim := range victims {
 		nodeInfoCopy.RemovePod(victim)
 	}
 	nodeNameToInfo[nodeName] = nodeInfoCopy
+	defer func() { nodeNameToInfo[nodeName] = originalNodeInfo }()
 	filteredNodes := allNodes
 	for _, extender := range extenders {
 		var err error
@@ -656,10 +655,7 @@ func selectVictimsOnNode(
 	meta algorithm.PredicateMetadata,
 	nodeInfo *schedulercache.NodeInfo,
 	fitPredicates map[string]algorithm.FitPredicate) ([]*v1.Pod, bool) {
-	higherPriority := func(pod1, pod2 interface{}) bool {
-		return util.GetPodPriority(pod1.(*v1.Pod)) > util.GetPodPriority(pod2.(*v1.Pod))
-	}
-	potentialVictims := util.SortableList{CompFunc: higherPriority}
+	potentialVictims := util.SortableList{CompFunc: util.HigherPriorityPod}
 	nodeInfoCopy := nodeInfo.Clone()
 
 	removePod := func(rp *v1.Pod) {
@@ -708,21 +704,52 @@ func selectVictimsOnNode(
 		// affinity or anti-affinity. Since failure reason for both affinity and
 		// anti-affinity is the same, we cannot say which one caused it. So, we try
 		// adding pods one at a time and see if any of them satisfies the affinity rules.
+		interPodAffinityPredicate, found := fitPredicates[predicates.MatchInterPodAffinity]
+		if !found {
+			glog.Warning("Unable to find inter-pod affinity predicate.")
+			return nil, false
+		}
+		// We add all the pods needed to satisfy the affinity rules first and then
+		// check if the preemptor still fits. If it does not, the preemption is not
+		// going to help the pod get scheduled on this node.
+		podIndexesForAffinity := []int{} // indexes of victims needed for affinity
+		affinityCanBeSatisfied := false
 		for i, p := range potentialVictims.Items {
 			existingPod := p.(*v1.Pod)
 			addPod(existingPod)
-			if fits, _, _ = podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil); !fits {
-				removePod(existingPod)
-			} else {
-				// We found the pod needed to satisfy pod affinity. Let's remove it from
-				// potential victims list.
-				// NOTE: We assume that pod affinity can be satisfied by only one pod,
-				// not multiple pods. This is how scheduler works today.
-				potentialVictims.Items = append(potentialVictims.Items[:i], potentialVictims.Items[i+1:]...)
+			podIndexesForAffinity = append(podIndexesForAffinity, i)
+			if fits, _, _ = interPodAffinityPredicate(pod, meta, nodeInfoCopy); fits {
+				affinityCanBeSatisfied = true
 				break
 			}
 		}
-		if !fits {
+		if !affinityCanBeSatisfied {
+			// Even after adding all the victims, affinity rules cannot be satisfied.
+			// The failure may be related to anti-affinity to higher priority pods or
+			// affinity to pods that do not exist in this topology.
+			return nil, false
+		}
+		// The last pod that we just added in the above loop is necessary to satisfy affinity.
+		// It should be removed from the victims. The rest, we check below if are actually needed.
+		lastIndex := podIndexesForAffinity[len(podIndexesForAffinity)-1]
+		potentialVictims.Items = append(potentialVictims.Items[:lastIndex], potentialVictims.Items[lastIndex+1:]...)
+		podIndexesForAffinity = podIndexesForAffinity[:len(podIndexesForAffinity)-1]
+
+		// So far we have found all the pods that satisfy the affinity rules, but
+		// this is not the minimum set. We start removing the extra ones in reverse
+		// order we added them, which means remove lowest priority first.
+		for i := len(podIndexesForAffinity) - 1; i >= 0; i-- {
+			victim := potentialVictims.Items[podIndexesForAffinity[i]].(*v1.Pod)
+			removePod(victim)
+			if fits, _, _ = interPodAffinityPredicate(pod, meta, nodeInfoCopy); !fits {
+				// This pod is needed. Add it back and remove it from the list of victims.
+				addPod(victim)
+				potentialVictims.Items = append(potentialVictims.Items[:podIndexesForAffinity[i]], potentialVictims.Items[podIndexesForAffinity[i]+1:]...)
+			}
+		}
+		// We have found the minimum set of pods needed to satisfy affinity rules.
+		// Let's see if other predicates are happy.
+		if fits, _, _ = podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil); !fits {
 			return nil, false
 		}
 	}
