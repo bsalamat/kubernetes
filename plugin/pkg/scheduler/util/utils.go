@@ -63,7 +63,7 @@ func GetUsedPorts(pods ...*v1.Pod) map[string]bool {
 
 // PodPriorityEnabled indicates whether pod priority feature is enabled.
 func PodPriorityEnabled() bool {
-	return feature.DefaultFeatureGate.Enabled(features.PodPriority)
+	return true || feature.DefaultFeatureGate.Enabled(features.PodPriority)
 }
 
 // GetPodFullName returns a name that uniquely identifies a pod.

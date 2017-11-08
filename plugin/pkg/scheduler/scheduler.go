@@ -53,6 +53,7 @@ type PodPreemptor interface {
 	GetUpdatedPod(pod *v1.Pod) (*v1.Pod, error)
 	DeletePod(pod *v1.Pod) error
 	UpdatePodAnnotations(pod *v1.Pod, annots map[string]string) error
+	RemoveNominatedNodeAnnotation(pod *v1.Pod) error
 }
 
 // Scheduler watches for new unscheduled pods. It attempts to find
@@ -203,29 +204,38 @@ func (sched *Scheduler) preempt(preemptor *v1.Pod, scheduleErr error) (string, e
 		glog.Errorf("Error getting the updated preemptor pod object: %v", err)
 		return "", err
 	}
-	node, victims, err := sched.config.Algorithm.Preempt(preemptor, sched.config.NodeLister, scheduleErr)
+	glog.Infof("BOBBY: attempting to preempt for pod %v", preemptor.Name)
+	node, victims, nominatedPodsToClear, err := sched.config.Algorithm.Preempt(preemptor, sched.config.NodeLister, scheduleErr)
 	if err != nil {
 		glog.Errorf("Error preempting victims to make room for %v/%v.", preemptor.Namespace, preemptor.Name)
 		return "", err
 	}
-	if node == nil {
-		return "", err
-	}
-	glog.Infof("Preempting %d pod(s) on node %v to make room for %v/%v.", len(victims), node.Name, preemptor.Namespace, preemptor.Name)
-	annotations := map[string]string{core.NominatedNodeAnnotationKey: node.Name}
-	err = sched.config.PodPreemptor.UpdatePodAnnotations(preemptor, annotations)
-	if err != nil {
-		glog.Errorf("Error in preemption process. Cannot update pod %v annotations: %v", preemptor.Name, err)
-		return "", err
-	}
-	for _, victim := range victims {
-		if err := sched.config.PodPreemptor.DeletePod(victim); err != nil {
-			glog.Errorf("Error preempting pod %v/%v: %v", victim.Namespace, victim.Name, err)
+	var nodeName = ""
+	if node != nil {
+		nodeName = node.Name
+		glog.Infof("Preempting %d pod(s) on node %v to make room for %v/%v.", len(victims), nodeName, preemptor.Namespace, preemptor.Name)
+		annotations := map[string]string{core.NominatedNodeAnnotationKey: nodeName}
+		err = sched.config.PodPreemptor.UpdatePodAnnotations(preemptor, annotations)
+		if err != nil {
+			glog.Errorf("Error in preemption process. Cannot update pod %v annotations: %v", preemptor.Name, err)
 			return "", err
 		}
-		sched.config.Recorder.Eventf(victim, v1.EventTypeNormal, "Preempted", "by %v/%v on node %v", preemptor.Namespace, preemptor.Name, node.Name)
+		for _, victim := range victims {
+			if err := sched.config.PodPreemptor.DeletePod(victim); err != nil {
+				glog.Errorf("Error preempting pod %v/%v: %v", victim.Namespace, victim.Name, err)
+				return "", err
+			}
+			sched.config.Recorder.Eventf(victim, v1.EventTypeNormal, "Preempted", "by %v/%v on node %v", preemptor.Namespace, preemptor.Name, nodeName)
+		}
 	}
-	return node.Name, err
+	for _, p := range nominatedPodsToClear {
+		rErr := sched.config.PodPreemptor.RemoveNominatedNodeAnnotation(p)
+		if rErr != nil {
+			glog.Errorf("Cannot remove nominated node annotation of pod: %v", rErr)
+			// We do not return as this error is not critical.
+		}
+	}
+	return nodeName, err
 }
 
 // assume signals to the cache that a pod is already in the cache, so that binding can be asynchronous.
@@ -303,6 +313,7 @@ func (sched *Scheduler) scheduleOne() {
 		return
 	}
 
+	glog.Infof("BOBBY: Attempting to schedule pod: %v", pod.Name)
 	glog.V(3).Infof("Attempting to schedule pod: %v/%v", pod.Namespace, pod.Name)
 
 	// Synchronously attempt to find a fit for the pod.
@@ -310,6 +321,7 @@ func (sched *Scheduler) scheduleOne() {
 	suggestedHost, err := sched.schedule(pod)
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInMicroseconds(start))
 	if err != nil {
+		glog.Infof("BOBBY: Failed to schedule pod %v", pod.Name)
 		// schedule() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
@@ -320,17 +332,18 @@ func (sched *Scheduler) scheduleOne() {
 		return
 	}
 
+	glog.Infof("BOBBY: Scheduled pod %v", pod.Name)
 	// Tell the cache to assume that a pod now is running on a given node, even though it hasn't been bound yet.
 	// This allows us to keep scheduling without waiting on binding to occur.
-	assumedPod := *pod
+	assumedPod := pod.DeepCopy()
 	// assume modifies `assumedPod` by setting NodeName=suggestedHost
-	err = sched.assume(&assumedPod, suggestedHost)
+	err = sched.assume(assumedPod, suggestedHost)
 	if err != nil {
 		return
 	}
 	// bind the pod to its host asynchronously (we can do this b/c of the assumption step above).
 	go func() {
-		err := sched.bind(&assumedPod, &v1.Binding{
+		err := sched.bind(assumedPod, &v1.Binding{
 			ObjectMeta: metav1.ObjectMeta{Namespace: assumedPod.Namespace, Name: assumedPod.Name, UID: assumedPod.UID},
 			Target: v1.ObjectReference{
 				Kind: "Node",

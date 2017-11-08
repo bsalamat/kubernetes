@@ -194,6 +194,7 @@ func NewConfigFactory(
 			},
 			Handler: cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
+					glog.Infof("---> BOBBY: received add event for pod: %v", obj.(*v1.Pod).Name)
 					if err := c.podQueue.Add(obj.(*v1.Pod)); err != nil {
 						runtime.HandleError(fmt.Errorf("unable to queue %T: %v", obj, err))
 					}
@@ -208,6 +209,7 @@ func NewConfigFactory(
 					}
 				},
 				DeleteFunc: func(obj interface{}) {
+					glog.Infof("BOBBY: pod %v is being deleted.", obj.(*v1.Pod).Name)
 					if err := c.podQueue.Delete(obj.(*v1.Pod)); err != nil {
 						runtime.HandleError(fmt.Errorf("unable to dequeue %T: %v", obj, err))
 					}
@@ -532,6 +534,7 @@ func (c *configFactory) deletePodFromCache(obj interface{}) {
 		glog.Errorf("cannot convert to *v1.Pod: %v", t)
 		return
 	}
+	glog.Infof("BOBBY: pod %v is being deleted.", pod.Name)
 	if err := c.schedulerCache.RemovePod(pod); err != nil {
 		glog.Errorf("scheduler cache RemovePod failed: %v", err)
 	}
@@ -833,7 +836,7 @@ func (f *configFactory) CreateFromKeys(predicateKeys, priorityKeys sets.String, 
 		f.equivalencePodCache = core.NewEquivalenceCache(getEquivalencePodFunc)
 		glog.Info("Created equivalence class cache")
 	}
-	algo := core.NewGenericScheduler(f.schedulerCache, f.equivalencePodCache, predicateFuncs, predicateMetaProducer, priorityConfigs, priorityMetaProducer, extenders)
+	algo := core.NewGenericScheduler(f.schedulerCache, f.equivalencePodCache, f.podQueue, predicateFuncs, predicateMetaProducer, priorityConfigs, priorityMetaProducer, extenders)
 
 	podBackoff := util.CreateDefaultPodBackoff()
 	return &scheduler.Config{
@@ -1040,6 +1043,7 @@ func (factory *configFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, pod
 				glog.Errorf("Error scheduling %v %v: %v; retrying", pod.Namespace, pod.Name, err)
 			}
 		}
+
 		backoff.Gc()
 		// Retry asynchronously.
 		// Note that this is extremely rudimentary and we need a more real error handling path.
@@ -1050,10 +1054,12 @@ func (factory *configFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, pod
 				Name:      pod.Name,
 			}
 
-			entry := backoff.GetEntry(podID)
-			if !entry.TryWait(backoff.MaxDuration()) {
-				glog.Warningf("Request for pod %v already in flight, abandoning", podID)
-				return
+			if !util.PodPriorityEnabled() {
+				entry := backoff.GetEntry(podID)
+				if !entry.TryWait(backoff.MaxDuration()) {
+					glog.Warningf("Request for pod %v already in flight, abandoning", podID)
+					return
+				}
 			}
 			// Get the pod again; it may have changed/been scheduled already.
 			getBackoff := initialGetBackoff
@@ -1061,7 +1067,8 @@ func (factory *configFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, pod
 				pod, err := factory.client.CoreV1().Pods(podID.Namespace).Get(podID.Name, metav1.GetOptions{})
 				if err == nil {
 					if len(pod.Spec.NodeName) == 0 {
-						podQueue.AddIfNotPresent(pod)
+						glog.Infof("BOBBY: calling queue add if not present with pod %v", pod.Name)
+						podQueue.AddUnschedulable(pod)
 					}
 					break
 				}
@@ -1129,6 +1136,7 @@ func (p *podPreemptor) GetUpdatedPod(pod *v1.Pod) (*v1.Pod, error) {
 }
 
 func (p *podPreemptor) DeletePod(pod *v1.Pod) error {
+	glog.Infof("BOBBY: preempting pod %v", pod.Name)
 	return p.Client.CoreV1().Pods(pod.Namespace).Delete(pod.Name, &metav1.DeleteOptions{})
 }
 
@@ -1140,6 +1148,28 @@ func (p *podPreemptor) UpdatePodAnnotations(pod *v1.Pod, annotations map[string]
 	for k, v := range annotations {
 		podCopy.Annotations[k] = v
 	}
+	ret := &unstructured.Unstructured{}
+	ret.SetAnnotations(podCopy.Annotations)
+	patchData, err := json.Marshal(ret)
+	if err != nil {
+		return err
+	}
+	_, error := p.Client.CoreV1().Pods(podCopy.Namespace).Patch(podCopy.Name, types.MergePatchType, patchData, "status")
+	return error
+}
+
+func (p *podPreemptor) RemoveNominatedNodeAnnotation(pod *v1.Pod) error {
+	glog.Infof("BOBBY: Removing nominated node name of pod %v", pod.Name)
+	podCopy := pod.DeepCopy()
+	if podCopy.Annotations == nil {
+		return fmt.Errorf("pod %v/%v has no annotation", pod.Namespace, pod.Name)
+	}
+	if _, exists := podCopy.Annotations[core.NominatedNodeAnnotationKey]; !exists {
+		return nil
+	}
+	// Note: Deleting the entry from the annotations and passing it Patch() will
+	// not remove the annotation. That's why we set it to empty string.
+	podCopy.Annotations[core.NominatedNodeAnnotationKey] = ""
 	ret := &unstructured.Unstructured{}
 	ret.SetAnnotations(podCopy.Annotations)
 	patchData, err := json.Marshal(ret)

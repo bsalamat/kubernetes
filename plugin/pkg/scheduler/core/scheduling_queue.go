@@ -34,6 +34,7 @@ import (
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 	priorityutil "k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities/util"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/util"
@@ -76,6 +77,7 @@ type FIFO struct {
 var _ = SchedulingQueue(&FIFO{}) // Making sure that FIFO implements SchedulingQueue.
 
 func (f *FIFO) Add(pod *v1.Pod) error {
+	glog.Infof("BOBBY: Add for pod %v", pod.Name)
 	return f.FIFO.Add(pod)
 }
 
@@ -84,14 +86,17 @@ func (f *FIFO) AddIfNotPresent(pod *v1.Pod) error {
 }
 
 func (f *FIFO) AddUnschedulable(pod *v1.Pod) error {
+	glog.Infof("BOBBY: AddUnschedulable for pod %v", pod.Name)
 	return f.FIFO.AddIfNotPresent(pod)
 }
 
 func (f *FIFO) Update(pod *v1.Pod) error {
+	glog.Infof("BOBBY: Update for pod %v", pod.Name)
 	return f.FIFO.Update(pod)
 }
 
 func (f *FIFO) Delete(pod *v1.Pod) error {
+	glog.Infof("BOBBY: Delete for pod %v", pod.Name)
 	return f.FIFO.Delete(pod)
 }
 
@@ -106,6 +111,7 @@ func (f *FIFO) Pop() (*v1.Pod, error) {
 		result = obj
 		return nil
 	})
+	glog.Infof("BOBBY: Pop for pod %v", result.(*v1.Pod).Name)
 	return result.(*v1.Pod), nil
 }
 
@@ -179,6 +185,7 @@ func NewPriorityQueue() *PriorityQueue {
 // Add adds a pod to the active queue. It should be called only when a new pod
 // is added.
 func (p *PriorityQueue) Add(pod *v1.Pod) error {
+	glog.Infof("BOBBY: Add for pod %v", pod.Name)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	err := p.activeQ.Add(pod)
@@ -212,8 +219,14 @@ func (p *PriorityQueue) AddIfNotPresent(pod *v1.Pod) error {
 	return err
 }
 
+func isPodUnschedulable(pod *v1.Pod) bool {
+	_, cond := podutil.GetPodCondition(&pod.Status, v1.PodScheduled)
+	return cond != nil && cond.Status == v1.ConditionFalse && cond.Reason == v1.PodReasonUnschedulable
+}
+
 // AddUnschedulable adds a pod to the unschedulable queue.
 func (p *PriorityQueue) AddUnschedulable(pod *v1.Pod) error {
+	glog.Infof("BOBBY: AddUnschedulalbe for pod %v", pod.Name)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if p.unschedulableQ.Get(pod) != nil {
@@ -222,11 +235,15 @@ func (p *PriorityQueue) AddUnschedulable(pod *v1.Pod) error {
 	if _, exists, _ := p.activeQ.Get(pod); exists {
 		return fmt.Errorf("pod is already present in the activeQ")
 	}
-	if p.receivedMoveRequest {
-		return p.activeQ.Add(pod)
+	if !p.receivedMoveRequest && isPodUnschedulable(pod) {
+		p.unschedulableQ.Add(pod)
+		return nil
 	}
-	p.unschedulableQ.Add(pod)
-	return nil
+	err := p.activeQ.Add(pod)
+	if err == nil {
+		p.cond.Broadcast()
+	}
+	return err
 }
 
 // Pop removes the head of the active queue and returns it.
@@ -241,6 +258,7 @@ func (p *PriorityQueue) Pop() (*v1.Pod, error) {
 		return nil, err
 	}
 	p.receivedMoveRequest = false
+	glog.Infof("BOBBY: Popping pod %v", obj.(*v1.Pod).Name)
 	return obj.(*v1.Pod), err
 }
 
@@ -250,6 +268,7 @@ func isPodUpdated(oldPod, newPod *v1.Pod) bool {
 	strip := func(pod *v1.Pod) *v1.Pod {
 		p := pod.DeepCopy()
 		p.ResourceVersion = ""
+		p.Generation = 0
 		p.Status = v1.PodStatus{}
 		return p
 	}
@@ -260,20 +279,19 @@ func isPodUpdated(oldPod, newPod *v1.Pod) bool {
 // the item from the unschedulable queue and adds the updated one to the active
 // queue.
 func (p *PriorityQueue) Update(pod *v1.Pod) error {
+	glog.Infof("BOBBY: PriorityQueue.Update pod %v", pod.Name)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	// If the pod is already in the active queue, just update it there.
 	if _, exists, _ := p.activeQ.Get(pod); exists {
 		err := p.activeQ.Update(pod)
-		if err == nil {
-			p.cond.Broadcast()
-		}
 		return err
 	}
 	// If the pod is in the unschedulable queue, updating it may make it schedulable.
 	if oldPod := p.unschedulableQ.Get(pod); oldPod != nil {
 		if isPodUpdated(oldPod, pod) {
-			p.unschedulableQ.Delete(pod)
+			glog.Infof("BOBBY: PriorityQueue.Update pod %v is updated", pod.Name)
+			p.unschedulableQ.Delete(oldPod)
 			err := p.activeQ.Add(pod)
 			if err == nil {
 				p.cond.Broadcast()
@@ -284,6 +302,7 @@ func (p *PriorityQueue) Update(pod *v1.Pod) error {
 			return nil
 		}
 	}
+	glog.Infof("BOBBY: PriorityQueue.Update pod %v is being added to activeQ", pod.Name)
 	// If pod is not in any of the two queue, we put it in the active queue.
 	err := p.activeQ.Add(pod)
 	if err == nil {
@@ -312,6 +331,7 @@ func (p *PriorityQueue) AssignedPodAdded(pod *v1.Pod) {
 // AssignedPodUpdated is called when a bound pod is updated. Change of labels
 // may make pending pods with matching affinity terms schedulable.
 func (p *PriorityQueue) AssignedPodUpdated(pod *v1.Pod) {
+	glog.Infof("BOBBY: AssignedPodUpdated pod %v", pod.Name)
 	p.movePodsToActiveQueue(p.getPodsWithMatchingAffinityTerm(pod))
 }
 
@@ -324,6 +344,7 @@ func (p *PriorityQueue) AssignedPodUpdated(pod *v1.Pod) {
 // example in a cluster where a lot of pods being deleted, such a high priority
 // pod can deprive other pods from getting scheduled.
 func (p *PriorityQueue) MoveAllToActiveQueue() {
+	glog.Infof("BOBBY: MoveAllToActiveQueue")
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	var unschedulablePods []interface{}
@@ -337,6 +358,7 @@ func (p *PriorityQueue) MoveAllToActiveQueue() {
 }
 
 func (p *PriorityQueue) movePodsToActiveQueue(pods []*v1.Pod) {
+	glog.Infof("BOBBY: movePodsToActiveQueue")
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	for _, pod := range pods {
@@ -376,7 +398,18 @@ func (p *PriorityQueue) getPodsWithMatchingAffinityTerm(pod *v1.Pod) []*v1.Pod {
 // but they are waiting for other pods to be removed from the node before they
 // can be actually scheduled.
 func (p *PriorityQueue) WaitingPodsOnNode(nodeName string) []*v1.Pod {
-	return p.unschedulableQ.GetPodsForNode(nodeName)
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	pods := p.unschedulableQ.GetPodsForNode(nodeName)
+	for _, obj := range p.activeQ.List() {
+		pod := obj.(*v1.Pod)
+		if pod.Annotations != nil {
+			if n, ok := pod.Annotations[NominatedNodeAnnotationKey]; ok && n == nodeName {
+				pods = append(pods, pod)
+			}
+		}
+	}
+	return pods
 }
 
 // UnschedulablePodsMap holds pods that cannot be scheduled. This data structure
@@ -402,6 +435,7 @@ func NominatedNodeName(pod *v1.Pod) string {
 
 // Add adds a pod to the unschedulable pods.
 func (u *UnschedulablePodsMap) Add(pod *v1.Pod) {
+	glog.Infof("BOBBY: Adding pod %v to unschedulable queue", pod.Name)
 	podKey := u.keyFunc(pod)
 	if _, exists := u.pods[podKey]; !exists {
 		u.pods[podKey] = pod
@@ -433,6 +467,7 @@ func (u *UnschedulablePodsMap) deleteFromNominated(pod *v1.Pod) {
 func (u *UnschedulablePodsMap) Delete(pod *v1.Pod) {
 	podKey := u.keyFunc(pod)
 	if p, exists := u.pods[podKey]; exists {
+		glog.Infof("BOBBY: Deleting pod %v from unschedulable queue", pod.Name)
 		u.deleteFromNominated(p)
 		delete(u.pods, podKey)
 	}
@@ -592,6 +627,7 @@ type Heap struct {
 // Add inserts an item, and puts it in the queue. The item is updated if it
 // already exists.
 func (h *Heap) Add(obj interface{}) error {
+	glog.Infof("BOBBY: Adding pod %v to active queue", obj.(*v1.Pod).Name)
 	key, err := h.data.keyFunc(obj)
 	if err != nil {
 		return cache.KeyError{Obj: obj, Err: err}
