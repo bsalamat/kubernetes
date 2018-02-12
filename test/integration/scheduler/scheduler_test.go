@@ -762,3 +762,48 @@ func TestPDBCache(t *testing.T) {
 		t.Errorf("No PDB was deleted from the cache: %v", err)
 	}
 }
+
+func TestPodCreationAndDeletion(t *testing.T) {
+	context := initTest(t, "creation-and-deletion")
+	defer cleanupTest(t, context)
+
+	// Create a node with some resources.
+	nodeRes := &v1.ResourceList{
+		v1.ResourcePods:   *resource.NewQuantity(32, resource.DecimalSI),
+		v1.ResourceCPU:    *resource.NewMilliQuantity(500, resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(500, resource.BinarySI),
+	}
+	cs := context.clientSet
+	_, err := createNode(cs, "node1", nodeRes)
+	if err != nil {
+		t.Fatalf("Error creating nodes: %v", err)
+	}
+
+	pod := initPausePod(context.clientSet, &pausePodConfig{
+		Name:      "victim-pod",
+		Namespace: context.ns.Name,
+		Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
+			v1.ResourceCPU:    *resource.NewMilliQuantity(400, resource.DecimalSI),
+			v1.ResourceMemory: *resource.NewQuantity(400, resource.BinarySI)},
+		},
+	})
+
+	for i := 0; i < 50; i++ {
+		// Create a pod and wait for it to be scheduled.
+		pod.Name = fmt.Sprintf("testpod-%v", i)
+		_, err = runPausePod(cs, pod)
+		if err != nil {
+			t.Fatalf("Error running pause pod: %v", err)
+		}
+
+		// Delete the pod and wait for it to go away.
+		err = cs.CoreV1().Pods(pod.Namespace).Delete(pod.Name, metav1.NewDeleteOptions(0))
+		if err != nil {
+			t.Errorf("Test Failed: error, %v, while deleting pod during test", err)
+		}
+		err = wait.Poll(pollInterval, wait.ForeverTestTimeout, podDeleted(cs, pod.Namespace, pod.Name))
+		if err != nil {
+			t.Errorf("Test Failed: error, %v, while waiting for pod to get deleted", err)
+		}
+	}
+}
