@@ -53,7 +53,7 @@ import (
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
-const enableEquivalenceCache = true
+const enableEquivalenceCache = false
 
 type nodeMutationFunc func(t *testing.T, n *v1.Node, nodeLister corelisters.NodeLister, c clientset.Interface)
 
@@ -760,5 +760,71 @@ func TestPDBCache(t *testing.T) {
 		return len(cachedPDBs) == 0, err
 	}); err != nil {
 		t.Errorf("No PDB was deleted from the cache: %v", err)
+	}
+}
+
+func TestPodCreationAndDeletion(t *testing.T) {
+	context := initTest(t, "creation-and-deletion")
+	defer cleanupTest(t, context)
+
+	numNodes := 20
+	numPods := numNodes * 2
+	numTestIterations := 50
+
+	// Create a few nodes with some resources.
+	nodeRes := &v1.ResourceList{
+		v1.ResourcePods:   *resource.NewQuantity(32, resource.DecimalSI),
+		v1.ResourceCPU:    *resource.NewMilliQuantity(500, resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(500, resource.BinarySI),
+	}
+	cs := context.clientSet
+	for i := 0; i < numNodes; i++ {
+		_, err := createNode(cs, fmt.Sprintf("node-%v", i), nodeRes)
+		if err != nil {
+			t.Fatalf("Error creating nodes: %v", err)
+		}
+	}
+
+	for i := 0; i < numTestIterations; i++ {
+		var pods = make([]*v1.Pod, numPods)
+		var err error
+		// Create twice as many pods that use a little less than half of the node resources
+		for n := 0; n < numPods; n++ {
+			pods[n], err = createPausePodWithResource(
+				cs,
+				fmt.Sprintf("victim-pod-%v", n),
+				context.ns.Name,
+				&v1.ResourceList{
+					v1.ResourceCPU:    *resource.NewMilliQuantity(200, resource.DecimalSI),
+					v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI),
+				},
+			)
+			if err != nil {
+				t.Fatalf("Error creating pods: %v", err)
+			}
+
+		}
+
+		// Wait for all pods to be scheduled
+		for n := 0; n < numPods; n++ {
+			err := waitForPodToSchedule(cs, pods[n])
+			if err != nil {
+				t.Errorf("error pod %v did not schedule: %v", pods[n].Name, err)
+			}
+		}
+
+		// Delete the pods and wait for them to go away.
+		for n := 0; n < numPods; n++ {
+			err = cs.CoreV1().Pods(pods[n].Namespace).Delete(pods[n].Name, metav1.NewDeleteOptions(0))
+			if err != nil {
+				t.Errorf("Test Failed: error, %v, while deleting pod %v", err, pods[n].Name)
+			}
+		}
+		for n := 0; n < numPods; n++ {
+			err = wait.Poll(pollInterval, wait.ForeverTestTimeout, podDeleted(cs, pods[n].Namespace, pods[n].Name))
+			if err != nil {
+				t.Errorf("Test Failed: error, %v, while waiting for pod to get deleted", err)
+			}
+		}
 	}
 }
