@@ -737,6 +737,7 @@ func PodFitsResources(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *s
 	}
 
 	allocatable := nodeInfo.AllocatableResource()
+	glog.V(1).Infof("*** Evaluating pod %v, pod request: %v, node free: %v", pod.Name, podRequest.MilliCPU, allocatable.MilliCPU-nodeInfo.RequestedResource().MilliCPU)
 	if allocatable.MilliCPU < podRequest.MilliCPU+nodeInfo.RequestedResource().MilliCPU {
 		predicateFails = append(predicateFails, NewInsufficientResourceError(v1.ResourceCPU, podRequest.MilliCPU, nodeInfo.RequestedResource().MilliCPU, allocatable.MilliCPU))
 	}

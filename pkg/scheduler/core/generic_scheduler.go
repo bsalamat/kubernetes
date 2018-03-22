@@ -246,6 +246,7 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 	if candidateNode == nil {
 		return nil, nil, nil, err
 	}
+	glog.V(4).Infof("Node %s is chosen for preemption.", candidateNode.Name)
 
 	// Lower priority pods nominated to run on this node, may no longer fit on
 	// this node. So, we should remove their nomination. Removing their
@@ -545,9 +546,9 @@ func podFitsOnNode(
 					failedPredicates = append(failedPredicates, reasons...)
 					// if alwaysCheckAllPredicates is false, short circuit all predicates when one predicate fails.
 					if !alwaysCheckAllPredicates {
-						glog.V(5).Infoln("since alwaysCheckAllPredicates has not been set, the predicate" +
-							"evaluation is short circuited and there are chances" +
-							"of other predicates failing as well.")
+						//						glog.V(5).Infoln("since alwaysCheckAllPredicates has not been set, the predicate" +
+						//							"evaluation is short circuited and there are chances" +
+						//							"of other predicates failing as well.")
 						break
 					}
 				}
@@ -849,7 +850,9 @@ func selectNodesForPreemption(pod *v1.Pod,
 		if meta != nil {
 			metaCopy = meta.ShallowCopy()
 		}
+		fmt.Printf("nodeinfo %v cpu before: %v, %v\n", nodeName, nodeNameToInfo[nodeName].AllocatableResource().MilliCPU, nodeNameToInfo[nodeName].RequestedResource().MilliCPU)
 		pods, numPDBViolations, fits := selectVictimsOnNode(pod, metaCopy, nodeNameToInfo[nodeName], predicates, queue, pdbs)
+		fmt.Printf("nodeinfo %v cpu after: %v, %v\n", nodeName, nodeNameToInfo[nodeName].AllocatableResource().MilliCPU, nodeNameToInfo[nodeName].RequestedResource().MilliCPU)
 		if fits {
 			resultLock.Lock()
 			victims := schedulerapi.Victims{

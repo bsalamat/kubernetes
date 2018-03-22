@@ -27,6 +27,7 @@ import (
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	priorityutil "k8s.io/kubernetes/pkg/scheduler/algorithm/priorities/util"
 	"k8s.io/kubernetes/pkg/scheduler/util"
+	"runtime"
 )
 
 var emptyResource = Resource{}
@@ -316,6 +317,8 @@ func hasPodAffinityConstraints(pod *v1.Pod) bool {
 
 // AddPod adds pod information to this NodeInfo.
 func (n *NodeInfo) AddPod(pod *v1.Pod) {
+	_, callerFile, callerLine, _ := runtime.Caller(2)
+	glog.Infof("** AddPod: %v, %v. Called from %v:%v", pod.Name, pod.UID, callerFile, callerLine)
 	res, non0CPU, non0Mem := calculateResource(pod)
 	n.requestedResource.MilliCPU += res.MilliCPU
 	n.requestedResource.Memory += res.Memory
@@ -367,6 +370,10 @@ func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 			continue
 		}
 		if k1 == k2 {
+			_, callerFile, callerLine, _ := runtime.Caller(1)
+			glog.Infof("** RemovePod: %v: %v. CPU before removing: %v. Called from %v:%v", pod.Name, pod.UID, n.requestedResource.MilliCPU, callerFile, callerLine)
+			//debug.PrintStack()
+
 			// delete the element
 			n.pods[i] = n.pods[len(n.pods)-1]
 			n.pods = n.pods[:len(n.pods)-1]
@@ -390,10 +397,11 @@ func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 			n.updateUsedPorts(pod, false)
 
 			n.generation++
-
+			glog.Infof("** CPU after removing: %v", n.requestedResource.MilliCPU)
 			return nil
 		}
 	}
+	glog.Errorf("no corresponding pod %s in pods of node %s", pod.Name, n.node.Name)
 	return fmt.Errorf("no corresponding pod %s in pods of node %s", pod.Name, n.node.Name)
 }
 

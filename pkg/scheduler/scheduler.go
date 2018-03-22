@@ -188,7 +188,7 @@ func (sched *Scheduler) Config() *Config {
 func (sched *Scheduler) schedule(pod *v1.Pod) (string, error) {
 	host, err := sched.config.Algorithm.Schedule(pod, sched.config.NodeLister)
 	if err != nil {
-		glog.V(1).Infof("Failed to schedule pod: %v/%v", pod.Namespace, pod.Name)
+		glog.V(1).Infof("Failed to schedule pod: %v/%v. Reason: %v", pod.Namespace, pod.Name, err.Error())
 		pod = pod.DeepCopy()
 		sched.config.Error(pod, err)
 		sched.config.Recorder.Eventf(pod, v1.EventTypeWarning, "FailedScheduling", "%v", err)
@@ -236,6 +236,7 @@ func (sched *Scheduler) preempt(preemptor *v1.Pod, scheduleErr error) (string, e
 				glog.Errorf("Error preempting pod %v/%v: %v", victim.Namespace, victim.Name, err)
 				return "", err
 			}
+			glog.V(5).Infof("*** Preempting pod %v/%v on node %v to create room for %v/%v", victim.Namespace, victim.Name, nodeName, preemptor.Namespace, preemptor.Name)
 			sched.config.Recorder.Eventf(victim, v1.EventTypeNormal, "Preempted", "by %v/%v on node %v", preemptor.Namespace, preemptor.Name, nodeName)
 		}
 	}
@@ -436,7 +437,7 @@ func (sched *Scheduler) scheduleOne() {
 		return
 	}
 
-	glog.V(3).Infof("Attempting to schedule pod: %v/%v", pod.Namespace, pod.Name)
+	glog.V(3).Infof("Attempting to schedule pod: %v/%v:%v", pod.Namespace, pod.Name, pod.UID)
 
 	// Synchronously attempt to find a fit for the pod.
 	start := time.Now()

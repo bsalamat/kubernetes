@@ -735,6 +735,7 @@ func (c *configFactory) deletePodFromCache(obj interface{}) {
 		glog.Errorf("cannot convert to *v1.Pod: %v", t)
 		return
 	}
+	glog.V(0).Infof("Received delete event for pod %v", pod.Name)
 	if err := c.schedulerCache.RemovePod(pod); err != nil {
 		glog.Errorf("scheduler cache RemovePod failed: %v", err)
 	}
@@ -745,6 +746,7 @@ func (c *configFactory) deletePodFromCache(obj interface{}) {
 
 func (c *configFactory) invalidateCachedPredicatesOnDeletePod(pod *v1.Pod) {
 	if c.enableEquivalenceClassCache {
+		glog.Infof("** pod %v deleted. invalidating eCache.", pod.Name)
 		// part of this case is the same as pod add.
 		c.equivalencePodCache.InvalidateCachedPredicateItemForPodAdd(pod, pod.Spec.NodeName)
 		// MatchInterPodAffinity need to be reconsidered for this node,
