@@ -89,6 +89,7 @@ go_library(
         "//pkg/api/legacyscheme:go_default_library",
         "//pkg/api/testapi:go_default_library",
         "//pkg/api/v1/pod:go_default_library",
+        "//pkg/controller/disruption:go_default_library",
         "//pkg/features:go_default_library",
         "//pkg/scheduler:go_default_library",
         "//pkg/scheduler/algorithmprovider:go_default_library",
