@@ -597,6 +597,69 @@ func mkMinAvailablePDB(name, namespace string, uid types.UID, minAvailable int, 
 	}
 }
 
+func waitCachedPDBsStable(context *TestContext, pdbs []*policy.PodDisruptionBudget, pdbPodNum []int32) error {
+	return wait.Poll(time.Second, 60*time.Second, func() (bool, error) {
+		cachedPDBs, err := context.scheduler.Config().SchedulerCache.ListPDBs(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		if len(cachedPDBs) != len(pdbs) {
+			return false, nil
+		}
+		for i, pdb := range pdbs {
+			found := false
+			for _, cpdb := range cachedPDBs {
+				if pdb.Name == cpdb.Name && pdb.Namespace == cpdb.Namespace {
+					found = true
+					if cpdb.Status.CurrentHealthy != pdbPodNum[i] {
+						return false, nil
+					}
+				}
+			}
+			if !found {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
+// waitCachedPodsStable waits until scheduler cache has the given pods.
+func waitCachedPodsStable(context *TestContext, pods []*v1.Pod) error {
+	return wait.Poll(time.Second, 30*time.Second, func() (bool, error) {
+		cachedPods, err := context.scheduler.Config().SchedulerCache.List(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		if len(pods) != len(cachedPods) {
+			return false, nil
+		}
+		for _, p := range pods {
+			actualPod, err1 := context.clientSet.CoreV1().Pods(p.Namespace).Get(p.Name, metav1.GetOptions{})
+			if err1 != nil {
+				return false, err1
+			}
+			cachedPod, err2 := context.scheduler.Config().SchedulerCache.GetPod(actualPod)
+			if err2 != nil || cachedPod == nil {
+				return false, err2
+			}
+		}
+		return true, nil
+	})
+}
+
+func addPodConditionReady(pod *v1.Pod) {
+	pod.Status = v1.PodStatus{
+		Phase: v1.PodRunning,
+		Conditions: []v1.PodCondition{
+			{
+				Type:   v1.PodReady,
+				Status: v1.ConditionTrue,
+			},
+		},
+	}
+}
+
 // TestPDBInPreemption tests PodDisruptionBudget support in preemption.
 func TestPDBInPreemption(t *testing.T) {
 	// Enable PodPriority feature gate.
@@ -605,6 +668,8 @@ func TestPDBInPreemption(t *testing.T) {
 	context := initTest(t, "preemption-pdb")
 	defer cleanupTest(t, context)
 	cs := context.clientSet
+
+	initDisruptionController(context)
 
 	defaultPodRes := &v1.ResourceRequirements{Requests: v1.ResourceList{
 		v1.ResourceCPU:    *resource.NewMilliQuantity(100, resource.DecimalSI),
@@ -625,6 +690,7 @@ func TestPDBInPreemption(t *testing.T) {
 		description         string
 		nodes               []*nodeConfig
 		pdbs                []*policy.PodDisruptionBudget
+		pdbPodNum           []int32
 		existingPods        []*v1.Pod
 		pod                 *v1.Pod
 		preemptedPodIndexes map[int]struct{}
@@ -635,6 +701,7 @@ func TestPDBInPreemption(t *testing.T) {
 			pdbs: []*policy.PodDisruptionBudget{
 				mkMinAvailablePDB("pdb-1", context.ns.Name, types.UID("pdb-1-uid"), 2, map[string]string{"foo": "bar"}),
 			},
+			pdbPodNum: []int32{2},
 			existingPods: []*v1.Pod{
 				initPausePod(context.clientSet, &pausePodConfig{
 					Name:      "low-pod1",
@@ -677,6 +744,7 @@ func TestPDBInPreemption(t *testing.T) {
 			pdbs: []*policy.PodDisruptionBudget{
 				mkMinAvailablePDB("pdb-1", context.ns.Name, types.UID("pdb-1-uid"), 2, map[string]string{"foo": "bar"}),
 			},
+			pdbPodNum: []int32{1},
 			existingPods: []*v1.Pod{
 				initPausePod(context.clientSet, &pausePodConfig{
 					Name:      "low-pod1",
@@ -716,6 +784,7 @@ func TestPDBInPreemption(t *testing.T) {
 				mkMinAvailablePDB("pdb-1", context.ns.Name, types.UID("pdb-1-uid"), 2, map[string]string{"foo1": "bar"}),
 				mkMinAvailablePDB("pdb-2", context.ns.Name, types.UID("pdb-2-uid"), 2, map[string]string{"foo2": "bar"}),
 			},
+			pdbPodNum: []int32{1, 5},
 			existingPods: []*v1.Pod{
 				initPausePod(context.clientSet, &pausePodConfig{
 					Name:      "low-pod1",
@@ -779,37 +848,21 @@ func TestPDBInPreemption(t *testing.T) {
 				Priority:  &highPriority,
 				Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
 					v1.ResourceCPU:    *resource.NewMilliQuantity(500, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI)},
+					v1.ResourceMemory: *resource.NewQuantity(400, resource.BinarySI)},
 				},
 			}),
-			preemptedPodIndexes: map[int]struct{}{0: {}, 1: {}},
+			// The third node is chosen because PDB is not violated for node 3 and the victims have lower priority than node-2.
+			preemptedPodIndexes: map[int]struct{}{4: {}, 5: {}, 6: {}},
 		},
 	}
 
 	for _, test := range tests {
+		fmt.Printf("==================BOBBY: running test %v\n", test.description)
 		for _, nodeConf := range test.nodes {
 			_, err := createNode(cs, nodeConf.name, nodeConf.res)
 			if err != nil {
 				t.Fatalf("Error creating node %v: %v", nodeConf.name, err)
 			}
-		}
-		// Create PDBs.
-		for _, pdb := range test.pdbs {
-			_, err := context.clientSet.PolicyV1beta1().PodDisruptionBudgets(context.ns.Name).Create(pdb)
-			if err != nil {
-				t.Fatalf("Failed to create PDB: %v", err)
-			}
-		}
-		// Wait for PDBs to show up in the scheduler's cache.
-		if err := wait.Poll(time.Second, 15*time.Second, func() (bool, error) {
-			cachedPDBs, err := context.scheduler.Config().SchedulerCache.ListPDBs(labels.Everything())
-			if err != nil {
-				t.Errorf("Error while polling for PDB: %v", err)
-				return false, err
-			}
-			return len(cachedPDBs) == len(test.pdbs), err
-		}); err != nil {
-			t.Fatalf("Not all PDBs were added to the cache: %v", err)
 		}
 
 		pods := make([]*v1.Pod, len(test.existingPods))
@@ -819,7 +872,29 @@ func TestPDBInPreemption(t *testing.T) {
 			if pods[i], err = runPausePod(cs, p); err != nil {
 				t.Fatalf("Test [%v]: Error running pause pod: %v", test.description, err)
 			}
+			// Add pod condition ready so that PDB is updated.
+			addPodConditionReady(p)
+			if _, err := context.clientSet.CoreV1().Pods(context.ns.Name).UpdateStatus(p); err != nil {
+				t.Fatal(err)
+			}
 		}
+		// Wait for Pods to be stable in scheduler cache.
+		if err := waitCachedPodsStable(context, test.existingPods); err != nil {
+			t.Fatalf("Not all pods are stable in the cache: %v", err)
+		}
+
+		// Create PDBs.
+		for _, pdb := range test.pdbs {
+			_, err := context.clientSet.PolicyV1beta1().PodDisruptionBudgets(context.ns.Name).Create(pdb)
+			if err != nil {
+				t.Fatalf("Failed to create PDB: %v", err)
+			}
+		}
+		// Wait for PDBs to show up in the scheduler's cache and become stable.
+		if err := waitCachedPDBsStable(context, test.pdbs, test.pdbPodNum); err != nil {
+			t.Fatalf("Not all pdbs are stable in the cache: %v", err)
+		}
+
 		// Create the "pod".
 		preemptor, err := createPausePod(cs, test.pod)
 		if err != nil {

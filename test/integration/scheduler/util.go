@@ -42,6 +42,8 @@ import (
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	"k8s.io/kubernetes/pkg/controller"
+	"k8s.io/kubernetes/pkg/controller/disruption"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler"
 	_ "k8s.io/kubernetes/pkg/scheduler/algorithmprovider"
@@ -194,6 +196,7 @@ func initTestSchedulerWithOptions(
 	// set setPodInformer if provided.
 	if setPodInformer {
 		go podInformer.Informer().Run(context.schedulerConfig.StopEverything)
+		controller.WaitForCacheSync("scheduler", context.schedulerConfig.StopEverything, podInformer.Informer().HasSynced)
 	}
 
 	eventBroadcaster := record.NewBroadcaster()
@@ -216,6 +219,26 @@ func initTestSchedulerWithOptions(
 	}
 	context.scheduler.Run()
 	return context
+}
+
+// initDisruptionController initializes and runs a Disruption Controller to properly
+// update PodDisuptionBudget objects.
+func initDisruptionController(context *TestContext) *disruption.DisruptionController {
+	informers := informers.NewSharedInformerFactory(context.clientSet, 12*time.Hour)
+
+	dc := disruption.NewDisruptionController(
+		informers.Core().V1().Pods(),
+		informers.Policy().V1beta1().PodDisruptionBudgets(),
+		informers.Core().V1().ReplicationControllers(),
+		informers.Extensions().V1beta1().ReplicaSets(),
+		informers.Extensions().V1beta1().Deployments(),
+		informers.Apps().V1beta1().StatefulSets(),
+		context.clientSet)
+
+	informers.Start(context.schedulerConfig.StopEverything)
+	informers.WaitForCacheSync(context.schedulerConfig.StopEverything)
+	go dc.Run(context.schedulerConfig.StopEverything)
+	return dc
 }
 
 // initTest initializes a test environment and creates master and scheduler with default
