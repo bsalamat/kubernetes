@@ -738,9 +738,11 @@ func PodFitsResources(pod *v1.Pod, meta algorithm.PredicateMetadata, nodeInfo *s
 	}
 
 	allocatable := nodeInfo.AllocatableResource()
+	glog.V(10).Infof("-----BOBBY: pod %v, node %v CPU requested: %v", pod.Name, nodeInfo.Node().Name, nodeInfo.RequestedResource().MilliCPU)
 	if allocatable.MilliCPU < podRequest.MilliCPU+nodeInfo.RequestedResource().MilliCPU {
 		predicateFails = append(predicateFails, NewInsufficientResourceError(v1.ResourceCPU, podRequest.MilliCPU, nodeInfo.RequestedResource().MilliCPU, allocatable.MilliCPU))
 	}
+	glog.V(10).Infof("-----BOBBY: pod %v, node %v memory requested: %v", pod.Name, nodeInfo.Node().Name, nodeInfo.RequestedResource().Memory)
 	if allocatable.Memory < podRequest.Memory+nodeInfo.RequestedResource().Memory {
 		predicateFails = append(predicateFails, NewInsufficientResourceError(v1.ResourceMemory, podRequest.Memory, nodeInfo.RequestedResource().Memory, allocatable.Memory))
 	}

@@ -210,6 +210,7 @@ func (sched *Scheduler) schedule(pod *v1.Pod) (string, error) {
 // If it succeeds, it adds the name of the node where preemption has happened to the pod annotations.
 // It returns the node name and an error if any.
 func (sched *Scheduler) preempt(preemptor *v1.Pod, scheduleErr error) (string, error) {
+	glog.V(10).Infof("Starting preemption process for pod %v", preemptor.Name)
 	if !util.PodPriorityEnabled() || sched.config.DisablePreemption {
 		glog.V(3).Infof("Pod priority feature is not enabled or preemption is disabled by scheduler configuration." +
 			" No preemption is performed.")
@@ -373,6 +374,7 @@ func (sched *Scheduler) assume(assumed *v1.Pod, host string) error {
 	// If the binding fails, scheduler will release resources allocated to assumed pod
 	// immediately.
 	assumed.Spec.NodeName = host
+	glog.V(5).Infof("Assuming pod %v on node %v", assumed.Name, host)
 	if err := sched.config.SchedulerCache.AssumePod(assumed); err != nil {
 		glog.Errorf("scheduler cache AssumePod failed: %v", err)
 

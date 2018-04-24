@@ -120,11 +120,16 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		return "", ErrNoNodesAvailable
 	}
 
+	//time.Sleep(time.Second)
 	// Used for all fit and priority funcs.
 	err = g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
 	if err != nil {
 		return "", err
 	}
+
+	//for _, ni := range g.cachedNodeInfoMap {
+	//	glog.V(6).Infof("scheduling pod %v: node: %v, requested CPU: %v", pod.Name, ni.Node().Name, ni.RequestedResource().MilliCPU)
+	//}
 
 	trace.Step("Computing predicates")
 	startPredicateEvalTime := time.Now()

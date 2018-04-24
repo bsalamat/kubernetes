@@ -695,46 +695,47 @@ func TestPDBInPreemption(t *testing.T) {
 		pod                 *v1.Pod
 		preemptedPodIndexes map[int]struct{}
 	}{
-		{
-			description: "A non-PDB violating pod is preempted despite its higher priority",
-			nodes:       []*nodeConfig{{name: "node-1", res: defaultNodeRes}},
-			pdbs: []*policy.PodDisruptionBudget{
-				mkMinAvailablePDB("pdb-1", context.ns.Name, types.UID("pdb-1-uid"), 2, map[string]string{"foo": "bar"}),
-			},
-			pdbPodNum: []int32{2},
-			existingPods: []*v1.Pod{
-				initPausePod(context.clientSet, &pausePodConfig{
-					Name:      "low-pod1",
-					Namespace: context.ns.Name,
-					Priority:  &lowPriority,
-					Resources: defaultPodRes,
-					Labels:    map[string]string{"foo": "bar"},
-				}),
-				initPausePod(context.clientSet, &pausePodConfig{
-					Name:      "low-pod2",
-					Namespace: context.ns.Name,
-					Priority:  &lowPriority,
-					Resources: defaultPodRes,
-					Labels:    map[string]string{"foo": "bar"},
-				}),
-				initPausePod(context.clientSet, &pausePodConfig{
-					Name:      "mid-pod3",
-					Namespace: context.ns.Name,
-					Priority:  &mediumPriority,
-					Resources: defaultPodRes,
-				}),
-			},
-			pod: initPausePod(cs, &pausePodConfig{
-				Name:      "preemptor-pod",
-				Namespace: context.ns.Name,
-				Priority:  &highPriority,
-				Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
-					v1.ResourceCPU:    *resource.NewMilliQuantity(300, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI)},
-				},
-			}),
-			preemptedPodIndexes: map[int]struct{}{2: {}},
-		},
+
+		//{
+		//	description: "A non-PDB violating pod is preempted despite its higher priority",
+		//	nodes:       []*nodeConfig{{name: "node-1", res: defaultNodeRes}},
+		//	pdbs: []*policy.PodDisruptionBudget{
+		//		mkMinAvailablePDB("pdb-1", context.ns.Name, types.UID("pdb-1-uid"), 2, map[string]string{"foo": "bar"}),
+		//	},
+		//	pdbPodNum: []int32{2},
+		//	existingPods: []*v1.Pod{
+		//		initPausePod(context.clientSet, &pausePodConfig{
+		//			Name:      "low-pod1",
+		//			Namespace: context.ns.Name,
+		//			Priority:  &lowPriority,
+		//			Resources: defaultPodRes,
+		//			Labels:    map[string]string{"foo": "bar"},
+		//		}),
+		//		initPausePod(context.clientSet, &pausePodConfig{
+		//			Name:      "low-pod2",
+		//			Namespace: context.ns.Name,
+		//			Priority:  &lowPriority,
+		//			Resources: defaultPodRes,
+		//			Labels:    map[string]string{"foo": "bar"},
+		//		}),
+		//		initPausePod(context.clientSet, &pausePodConfig{
+		//			Name:      "mid-pod3",
+		//			Namespace: context.ns.Name,
+		//			Priority:  &mediumPriority,
+		//			Resources: defaultPodRes,
+		//		}),
+		//	},
+		//	pod: initPausePod(cs, &pausePodConfig{
+		//		Name:      "preemptor-pod",
+		//		Namespace: context.ns.Name,
+		//		Priority:  &highPriority,
+		//		Resources: &v1.ResourceRequirements{Requests: v1.ResourceList{
+		//			v1.ResourceCPU:    *resource.NewMilliQuantity(300, resource.DecimalSI),
+		//			v1.ResourceMemory: *resource.NewQuantity(200, resource.BinarySI)},
+		//		},
+		//	}),
+		//	preemptedPodIndexes: map[int]struct{}{2: {}},
+		//},
 		{
 			description: "A node without any PDB violating pods is preferred for preemption",
 			nodes: []*nodeConfig{

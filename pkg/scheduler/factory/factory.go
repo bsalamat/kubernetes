@@ -612,6 +612,8 @@ func (c *configFactory) addPodToCache(obj interface{}) {
 		return
 	}
 
+	fmt.Printf("----BOBBY: Adding pod to cache, pod: %v\n", pod.Name)
+
 	if err := c.schedulerCache.AddPod(pod); err != nil {
 		glog.Errorf("scheduler cache AddPod failed: %v", err)
 	}
@@ -638,11 +640,14 @@ func (c *configFactory) updatePodInCache(oldObj, newObj interface{}) {
 		glog.Errorf("scheduler cache UpdatePod failed: %v", err)
 	}
 
+	fmt.Printf("----BOBBY: Updating pod in cache, pod: %v\n", newPod.Name)
+
 	c.invalidateCachedPredicatesOnUpdatePod(newPod, oldPod)
 	c.podQueue.AssignedPodUpdated(newPod)
 }
 
 func (c *configFactory) addPodToSchedulingQueue(obj interface{}) {
+	glog.V(5).Infof("----BOBBY: adding pod to queue, pod: %v", obj.(*v1.Pod).Name)
 	if err := c.podQueue.Add(obj.(*v1.Pod)); err != nil {
 		runtime.HandleError(fmt.Errorf("unable to queue %T: %v", obj, err))
 	}
@@ -723,6 +728,8 @@ func (c *configFactory) deletePodFromCache(obj interface{}) {
 	if err := c.schedulerCache.RemovePod(pod); err != nil {
 		glog.Errorf("scheduler cache RemovePod failed: %v", err)
 	}
+
+	fmt.Printf("----BOBBY: Deleting pod from cache, pod: %v\n", pod.Name)
 
 	c.invalidateCachedPredicatesOnDeletePod(pod)
 	c.podQueue.MoveAllToActiveQueue()

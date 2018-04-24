@@ -118,8 +118,13 @@ func (cache *schedulerCache) UpdateNodeNameToInfoMap(nodeNameToInfo map[string]*
 			// Transient scheduler info is reset here.
 			info.TransientInfo.resetTransientSchedulerInfo()
 		}
+		//fmt.Printf("&&&&&BOBBY: node %v CPU %v\n", name, info.requestedResource.MilliCPU)
+		if _, ok := nodeNameToInfo[name]; ok {
+			fmt.Printf("&&&&&BOBBY: node before clone %v CPU %v\n", name, nodeNameToInfo[name].requestedResource.MilliCPU)
+		}
 		if current, ok := nodeNameToInfo[name]; !ok || current.generation != info.generation {
 			nodeNameToInfo[name] = info.Clone()
+			fmt.Printf("&&&&&BOBBY: node clone %v CPU %v\n", name, nodeNameToInfo[name].requestedResource.MilliCPU)
 		}
 	}
 	for name := range nodeNameToInfo {
@@ -232,6 +237,7 @@ func (cache *schedulerCache) ForgetPod(pod *v1.Pod) error {
 
 // Assumes that lock is already acquired.
 func (cache *schedulerCache) addPod(pod *v1.Pod) {
+	fmt.Printf("+++++BOBBY: cache adding pod %v\n", pod.Name)
 	n, ok := cache.nodes[pod.Spec.NodeName]
 	if !ok {
 		n = NewNodeInfo()
@@ -251,11 +257,13 @@ func (cache *schedulerCache) updatePod(oldPod, newPod *v1.Pod) error {
 
 // Assumes that lock is already acquired.
 func (cache *schedulerCache) removePod(pod *v1.Pod) error {
+	fmt.Printf("+++++BOBBY: cache removing pod %v\n", pod.Name)
 	n := cache.nodes[pod.Spec.NodeName]
 	if err := n.RemovePod(pod); err != nil {
 		return err
 	}
 	if len(n.pods) == 0 && n.node == nil {
+		fmt.Printf("+++++BOBBY: deleting node %v\n", n.node.Name)
 		delete(cache.nodes, pod.Spec.NodeName)
 	}
 	return nil

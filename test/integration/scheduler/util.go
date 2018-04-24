@@ -156,7 +156,7 @@ func initTestSchedulerWithOptions(
 	defer utilfeaturetesting.SetFeatureGateDuringTest(
 		t,
 		utilfeature.DefaultFeatureGate,
-		features.EnableEquivalenceClassCache, true)()
+		features.EnableEquivalenceClassCache, false)()
 
 	// 1. Create scheduler
 	context.informerFactory = informers.NewSharedInformerFactory(context.clientSet, time.Second)
@@ -165,7 +165,7 @@ func initTestSchedulerWithOptions(
 
 	// create independent pod informer if required
 	if setPodInformer {
-		podInformer = factory.NewPodInformer(context.clientSet, 12*time.Hour)
+		podInformer = factory.NewPodInformer(context.clientSet, 0)
 	} else {
 		podInformer = context.informerFactory.Core().V1().Pods()
 	}

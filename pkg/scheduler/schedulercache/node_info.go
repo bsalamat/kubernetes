@@ -320,6 +320,7 @@ func (n *NodeInfo) AllocatableResource() Resource {
 // SetAllocatableResource sets the allocatableResource information of given node.
 func (n *NodeInfo) SetAllocatableResource(allocatableResource *Resource) {
 	n.allocatableResource = allocatableResource
+	n.generation++
 }
 
 // Clone returns a copy of this node.
@@ -375,6 +376,8 @@ func (n *NodeInfo) AddPod(pod *v1.Pod) {
 	n.requestedResource.MilliCPU += res.MilliCPU
 	n.requestedResource.Memory += res.Memory
 	n.requestedResource.EphemeralStorage += res.EphemeralStorage
+	glog.V(5).Infof("---BOBBY: Node %v Info pod %v added: CPU: %v\n", n.Node().Name, pod.Name, n.requestedResource.MilliCPU)
+	//debug.PrintStack()
 	if n.requestedResource.ScalarResources == nil && len(res.ScalarResources) > 0 {
 		n.requestedResource.ScalarResources = map[v1.ResourceName]int64{}
 	}
@@ -439,6 +442,7 @@ func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 			n.nonzeroRequest.MilliCPU -= non0CPU
 			n.nonzeroRequest.Memory -= non0Mem
 
+			glog.V(5).Infof("---BOBBY: Node %v Info pod %v removed: CPU: %v\n", n.Node().Name, pod.Name, n.requestedResource.MilliCPU)
 			// Release ports when remove Pods.
 			n.updateUsedPorts(pod, false)
 
@@ -476,6 +480,7 @@ func (n *NodeInfo) updateUsedPorts(pod *v1.Pod, add bool) {
 			}
 		}
 	}
+	n.generation++
 }
 
 // SetNode sets the overall node information.
