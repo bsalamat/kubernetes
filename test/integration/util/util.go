@@ -96,7 +96,7 @@ func createSchedulerConfigurator(
 	informerFactory informers.SharedInformerFactory,
 ) scheduler.Configurator {
 	// Enable EnableEquivalenceClassCache for all integration tests.
-	utilfeature.DefaultFeatureGate.Set("EnableEquivalenceClassCache=true")
+	utilfeature.DefaultFeatureGate.Set("EnableEquivalenceClassCache=false")
 
 	return factory.NewConfigFactory(&factory.ConfigFactoryArgs{
 		SchedulerName:                  v1.DefaultSchedulerName,
