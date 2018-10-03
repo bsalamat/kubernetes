@@ -67,6 +67,7 @@ func (o *DeprecatedOptions) AddFlags(fs *pflag.FlagSet, cfg *kubeschedulerconfig
 	fs.MarkDeprecated("hard-pod-affinity-symmetric-weight", "This option was moved to the policy configuration file")
 	fs.StringVar(&cfg.FailureDomains, "failure-domains", cfg.FailureDomains, "Indicate the \"all topologies\" set for an empty topologyKey when it's used for PreferredDuringScheduling pod anti-affinity.")
 	fs.MarkDeprecated("failure-domains", "Doesn't have any effect. Will be removed in future version.")
+	fs.Int32Var(&cfg.PercentageOfNodesToScore, "percentage-of-nodes-to-score", cfg.PercentageOfNodesToScore, "percentage of nodes to score")
 }
 
 // Validate validates the deprecated scheduler options.
