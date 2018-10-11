@@ -849,6 +849,10 @@
      "description": {
       "type": "string",
       "description": "description is an arbitrary string that usually provides guidelines on when this priority class should be used."
+     },
+     "nonPreempting": {
+      "type": "boolean",
+      "description": "nonPreempting specifies whether a pod with this PriorityClass could trigger a preemption process. If this field is unset, the PriorityClass is considered a preempting class by default."
      }
     }
    },
