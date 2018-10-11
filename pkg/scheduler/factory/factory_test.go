@@ -555,6 +555,7 @@ func newConfigFactory(client *clientset.Clientset, hardPodAffinitySymmetricWeigh
 		informerFactory.Core().V1().Services(),
 		informerFactory.Policy().V1beta1().PodDisruptionBudgets(),
 		informerFactory.Storage().V1().StorageClasses(),
+		informerFactory.Scheduling().V1beta1().PriorityClasses(),
 		hardPodAffinitySymmetricWeight,
 		enableEquivalenceCache,
 		disablePodPreemption,

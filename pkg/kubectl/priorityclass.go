@@ -30,6 +30,7 @@ type PriorityClassV1Generator struct {
 	Value         int32
 	GlobalDefault bool
 	Description   string
+	NonPreempting bool
 }
 
 // Ensure it supports the generator pattern that uses parameters specified during construction.
@@ -41,6 +42,7 @@ func (PriorityClassV1Generator) ParamNames() []GeneratorParam {
 		{"value", true},
 		{"global-default", false},
 		{"description", false},
+		{"non-preempting", false},
 	}
 }
 
@@ -68,7 +70,13 @@ func (s PriorityClassV1Generator) Generate(params map[string]interface{}) (runti
 	if !found {
 		return nil, fmt.Errorf("expected string, found %v", description)
 	}
-	delegate := &PriorityClassV1Generator{Name: name, Value: value, GlobalDefault: globalDefault, Description: description}
+
+	nonPreempting, found := params["non-preempting"].(bool)
+	if !found {
+		return nil, fmt.Errorf("expected bool, found %v", nonPreempting)
+	}
+
+	delegate := &PriorityClassV1Generator{Name: name, Value: value, GlobalDefault: globalDefault, Description: description, NonPreempting: nonPreempting}
 	return delegate.StructuredGenerate()
 }
 
@@ -81,5 +89,6 @@ func (s *PriorityClassV1Generator) StructuredGenerate() (runtime.Object, error) 
 		Value:         s.Value,
 		GlobalDefault: s.GlobalDefault,
 		Description:   s.Description,
+		NonPreempting: s.NonPreempting,
 	}, nil
 }

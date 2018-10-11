@@ -110,6 +110,7 @@ type genericScheduler struct {
 	volumeBinder             *volumebinder.VolumeBinder
 	pvcLister                corelisters.PersistentVolumeClaimLister
 	pdbLister                algorithm.PDBLister
+	priorityClassLister      algorithm.PriorityClassLister
 	disablePreemption        bool
 	percentageOfNodesToScore int32
 }
@@ -248,10 +249,17 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 	if !ok || fitError == nil {
 		return nil, nil, nil, nil
 	}
+
+	if podHasNonPreempting(pod, g.priorityClassLister) {
+		glog.V(5).Infof("Pod %v/%v with this PriorityClass could not trigger a preemption process.", pod.Namespace, pod.Name)
+		return nil, nil, nil, nil
+	}
+
 	err := g.snapshot()
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	if !podEligibleToPreemptOthers(pod, g.cachedNodeInfoMap) {
 		glog.V(5).Infof("Pod %v/%v is not eligible for more preemption.", pod.Namespace, pod.Name)
 		return nil, nil, nil, nil
@@ -1112,6 +1120,17 @@ func podEligibleToPreemptOthers(pod *v1.Pod, nodeNameToInfo map[string]*schedule
 	return true
 }
 
+func podHasNonPreempting(pod *v1.Pod, priorityClassLister algorithm.PriorityClassLister) bool {
+	if len(pod.Spec.PriorityClassName) == 0 {
+		return false
+	}
+	priorityClass, err := priorityClassLister.Get(pod.Spec.PriorityClassName)
+	if err != nil {
+		return false
+	}
+	return priorityClass.NonPreempting
+}
+
 // podPassesBasicChecks makes sanity checks on the pod if it can be scheduled.
 func podPassesBasicChecks(pod *v1.Pod, pvcLister corelisters.PersistentVolumeClaimLister) error {
 	// Check PVCs used by the pod
@@ -1151,6 +1170,7 @@ func NewGenericScheduler(
 	volumeBinder *volumebinder.VolumeBinder,
 	pvcLister corelisters.PersistentVolumeClaimLister,
 	pdbLister algorithm.PDBLister,
+	priorityClassLister algorithm.PriorityClassLister,
 	alwaysCheckAllPredicates bool,
 	disablePreemption bool,
 	percentageOfNodesToScore int32,
@@ -1168,6 +1188,7 @@ func NewGenericScheduler(
 		volumeBinder:             volumeBinder,
 		pvcLister:                pvcLister,
 		pdbLister:                pdbLister,
+		priorityClassLister:      priorityClassLister,
 		alwaysCheckAllPredicates: alwaysCheckAllPredicates,
 		disablePreemption:        disablePreemption,
 		percentageOfNodesToScore: percentageOfNodesToScore,

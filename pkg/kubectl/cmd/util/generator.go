@@ -65,6 +65,7 @@ const (
 	PodDisruptionBudgetV1GeneratorName      = "poddisruptionbudget/v1beta1"
 	PodDisruptionBudgetV2GeneratorName      = "poddisruptionbudget/v1beta1/v2"
 	PriorityClassV1Alpha1GeneratorName      = "priorityclass/v1alpha1"
+	PriorityClassV1Beta1GeneratorName       = "priorityclass/v1beta1"
 )
 
 // GeneratorFunc returns the generators for the provided command

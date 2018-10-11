@@ -111,6 +111,7 @@ func createSchedulerConfigurator(
 		ServiceInformer:                informerFactory.Core().V1().Services(),
 		PdbInformer:                    informerFactory.Policy().V1beta1().PodDisruptionBudgets(),
 		StorageClassInformer:           informerFactory.Storage().V1().StorageClasses(),
+		PriorityClassInformers:         informerFactory.Scheduling().V1beta1().PriorityClasses(),
 		HardPodAffinitySymmetricWeight: v1.DefaultHardPodAffinitySymmetricWeight,
 		EnableEquivalenceClassCache:    utilfeature.DefaultFeatureGate.Enabled(features.EnableEquivalenceClassCache),
 		DisablePreemption:              false,
