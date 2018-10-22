@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utiltrace "k8s.io/apiserver/pkg/util/trace"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	policyinformers "k8s.io/client-go/informers/policy/v1beta1"
@@ -480,7 +481,9 @@ func (sched *Scheduler) bind(assumed *v1.Pod, b *v1.Binding) error {
 
 // scheduleOne does the entire scheduling workflow for a single pod.  It is serialized on the scheduling algorithm's host fitting.
 func (sched *Scheduler) scheduleOne() {
+	trace := utiltrace.New("NextPod")
 	pod := sched.config.NextPod()
+	trace.LogIfLong(time.Millisecond)
 	// pod could be nil when schedulerQueue is closed
 	if pod == nil {
 		return
@@ -518,6 +521,9 @@ func (sched *Scheduler) scheduleOne() {
 		return
 	}
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInMicroseconds(start))
+
+	trace = utiltrace.New("assuming")
+	defer trace.LogIfLong(2 * time.Millisecond)
 	// Tell the cache to assume that a pod now is running on a given node, even though it hasn't been bound yet.
 	// This allows us to keep scheduling without waiting on binding to occur.
 	assumedPod := pod.DeepCopy()

@@ -82,7 +82,7 @@ var (
 			Subsystem: SchedulerSubsystem,
 			Name:      "scheduling_algorithm_latency_microseconds",
 			Help:      "Scheduling algorithm latency",
-			Buckets:   prometheus.ExponentialBuckets(1000, 2, 15),
+			Buckets:   prometheus.ExponentialBuckets(4000, 2, 15),
 		},
 	)
 	SchedulingAlgorithmPredicateEvaluationDuration = prometheus.NewHistogram(
