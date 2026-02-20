@@ -550,13 +550,19 @@ func TestCloseIdleConnections(t *testing.T) {
 	serviceIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	endpointSliceIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	for _, obj := range apiServices {
-		apiServiceIndexer.Add(obj)
+		if err := apiServiceIndexer.Add(obj); err != nil {
+			t.Fatalf("failed to add APIService: %v", err)
+		}
 	}
 	for _, obj := range services {
-		serviceIndexer.Add(obj)
+		if err := serviceIndexer.Add(obj); err != nil {
+			t.Fatalf("failed to add service: %v", err)
+		}
 	}
 	for _, obj := range endpointSlices {
-		endpointSliceIndexer.Add(obj)
+		if err := endpointSliceIndexer.Add(obj); err != nil {
+			t.Fatalf("failed to add endpointSlice: %v", err)
+		}
 	}
 
 	endpointSliceGetter, err := proxy.NewEndpointSliceListerGetter(discoveryv1listers.NewEndpointSliceLister(endpointSliceIndexer))
