@@ -32,6 +32,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/util/proxy"
@@ -251,7 +252,9 @@ func (c *AvailableConditionController) sync(key string) error {
 		// that's not so bad) and sets a very short timeout.  This is a best effort GET that provides no additional information
 		transportConfig := &transport.Config{
 			TLS: transport.TLSConfig{
-				Insecure: true,
+				Insecure:   apiService.Spec.InsecureSkipTLSVerify || len(apiService.Spec.CABundle) == 0,
+				CAData:     apiService.Spec.CABundle,
+				ServerName: apiService.Spec.Service.Name + "." + apiService.Spec.Service.Namespace + ".svc",
 			},
 			DialHolder: c.proxyTransportDial,
 		}
@@ -307,6 +310,7 @@ func (c *AvailableConditionController) sync(key string) error {
 						resp.Body.Close()
 						// we should always been in the 200s or 300s
 						if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+							utilnet.CloseIdleConnectionsFor(restTransport)
 							errCh <- fmt.Errorf("bad status from %v: %d", discoveryURL, resp.StatusCode)
 							return
 						}
@@ -318,6 +322,7 @@ func (c *AvailableConditionController) sync(key string) error {
 				select {
 				case err = <-errCh:
 					if err != nil {
+						utilnet.CloseIdleConnectionsFor(restTransport)
 						results <- fmt.Errorf("failing or missing response from %v: %w", discoveryURL, err)
 						return
 					}
@@ -325,6 +330,7 @@ func (c *AvailableConditionController) sync(key string) error {
 					// we had trouble with slow dial and DNS responses causing us to wait too long.
 					// we added this as insurance
 				case <-time.After(6 * time.Second):
+					utilnet.CloseIdleConnectionsFor(restTransport)
 					results <- fmt.Errorf("timed out waiting for %v", discoveryURL)
 					return
 				}
