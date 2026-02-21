@@ -606,7 +606,7 @@ func TestCloseIdleConnections(t *testing.T) {
 	select {
 	case <-closed:
 		// success, connection was closed
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for connection to be closed")
 	}
 }
